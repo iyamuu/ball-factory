@@ -3,7 +3,7 @@
  * Time values are in seconds unless the name says otherwise.
  */
 
-export type MachineId = 'splitter' | 'accelerator' | 'doubler' | 'speed';
+export type MachineId = 'splitter' | 'accelerator' | 'press' | 'speed';
 
 export interface MachineDef {
   id: MachineId;
@@ -11,6 +11,8 @@ export interface MachineDef {
   label: string;
   /** Number shown on the card below the label (e.g. "x2"). */
   figure: string;
+  /** One-line effect description shown on the card. */
+  desc: string;
   /** Display colour. */
   color: number;
   /** True if the machine is placed on the line. Speed upgrades the source instead. */
@@ -58,9 +60,11 @@ export const BALANCE = {
       /** Production rate multiplier while boost is active. Not stacked across accelerators. */
       rateMultiplier: 1.5,
     },
-    doubler: {
-      /** Ball value multiplier. */
+    press: {
+      /** Value multiplier for processed balls. */
       multiplier: 2,
+      /** Balls per second the press can process. Balls above this pass through unchanged. */
+      capacityPerSec: 20,
     },
     speed: {
       /** Source base rate multiplier. */
@@ -70,10 +74,17 @@ export const BALANCE = {
 
   /** Card definitions. Order here is the order used by the seeded draw. */
   machineDefs: [
-    { id: 'splitter', label: 'SPLIT', figure: 'x2', color: 0x4fc3f7, onLine: true },
-    { id: 'accelerator', label: 'ACCEL', figure: '10 > 3s', color: 0xffb74d, onLine: true },
-    { id: 'doubler', label: 'VALUE', figure: 'x2', color: 0xba68c8, onLine: true },
-    { id: 'speed', label: 'SPEED', figure: 'x1.5', color: 0x81c784, onLine: false },
+    { id: 'splitter', label: 'SPLIT', figure: 'x2', desc: 'Balls x2', color: 0x4fc3f7, onLine: true },
+    {
+      id: 'accelerator',
+      label: 'ACCEL',
+      figure: '10 > 3s',
+      desc: 'Every 10 balls: +50% speed for 3s',
+      color: 0xffb74d,
+      onLine: true,
+    },
+    { id: 'press', label: 'PRESS', figure: 'x2', desc: 'Value x2, up to 20 balls/s', color: 0xba68c8, onLine: true },
+    { id: 'speed', label: 'SPEED', figure: 'x1.5', desc: 'Source speed x1.5', color: 0x81c784, onLine: false },
   ] as MachineDef[],
 
   visuals: {

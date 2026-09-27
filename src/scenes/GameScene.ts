@@ -21,6 +21,9 @@ const MAX_STEPS_PER_FRAME = 40;
 /** A frame longer than this is treated as a stall, not as elapsed play time. */
 const MAX_FRAME_SEC = 1;
 
+const BALL_COLOR = 0xe8eef4;
+const PRESSED_COLOR = 0xba68c8;
+
 interface VisualBall {
   shape: Phaser.GameObjects.Arc;
   /** Index of the next line machine this ball has not passed yet. */
@@ -30,10 +33,21 @@ interface VisualBall {
   active: boolean;
 }
 
+interface MachineNode {
+  container: Phaser.GameObjects.Container;
+  /** Live status text under the icon (accelerator progress, press share). */
+  status: Phaser.GameObjects.Text | null;
+}
+
 export interface RoundResult {
   score: number;
   previousBest: number;
   saved: boolean;
+  /** Line machines in placement order. */
+  line: MachineId[];
+  speedCount: number;
+  /** Highest score rate reached during the round. */
+  peakRate: number;
 }
 
 /** Testing hook exposed on window.__bf. */
@@ -57,14 +71,16 @@ export class GameScene extends Phaser.Scene {
   private simAccumulator = 0;
   private skipNextDelta = true;
   private fxRng!: Rng;
+  private peakRate = 0;
 
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
   private rateText!: Phaser.GameObjects.Text;
   private sourceText!: Phaser.GameObjects.Text;
+  private boostText!: Phaser.GameObjects.Text;
   private sourceShape!: Phaser.GameObjects.Arc;
   private boostRing!: Phaser.GameObjects.Arc;
-  private machineNodes: Phaser.GameObjects.Container[] = [];
+  private machineNodes: MachineNode[] = [];
   private machineXs: number[] = [];
   private lineGfx!: Phaser.GameObjects.Graphics;
   private panel!: CardPanel;
@@ -89,6 +105,7 @@ export class GameScene extends Phaser.Scene {
     this.spawnAcc = 0;
     this.popupAcc = 0;
     this.popupGain = 0;
+    this.peakRate = 0;
     this.fxRng = new Rng((Date.now() & 0xffffffff) >>> 0);
     this.machineNodes = [];
     this.machineXs = [];
@@ -99,6 +116,7 @@ export class GameScene extends Phaser.Scene {
     this.panel = new CardPanel(this);
     this.layoutMachines();
     this.refreshTexts();
+    this.refreshSource();
 
     const hook: DebugHook = {
       sim: this.sim,
@@ -140,30 +158,29 @@ export class GameScene extends Phaser.Scene {
     // Visuals are cosmetic: clamp so balls do not teleport after a long frame.
     this.updateBalls(Math.min(dt, 0.1));
     this.refreshTexts();
+    this.refreshMachineStatus();
   }
 
   // ---------------------------------------------------------------- simulation
 
   private runSimStep(step: number): void {
-    const before = this.sim.scoreRate;
     const res = this.sim.step(step);
     this.popupGain += res.gained;
     this.popupAcc += step;
+    this.peakRate = Math.max(this.peakRate, this.sim.scoreRate);
 
     if (res.boostStarted) {
       this.flashBoost();
       this.shake(0.5);
     }
-    if (this.sim.scoreRate !== before) this.refreshSource();
+    this.refreshSource();
 
     if (this.popupAcc >= BALANCE.visuals.popupIntervalSec) {
       this.popupAcc = 0;
       const n = Math.floor(this.popupGain);
       this.popupGain -= n;
-      if (n > 0) {
-        const x = WIDTH / 2 + this.fxRng.range(-120, 120);
-        spawnPopup(this, x, 300, `+${n}`, false);
-      }
+      // One fixed lane to the right of the rate text; lifetime matches the interval so popups do not stack.
+      if (n > 0) spawnPopup(this, WIDTH / 2 + 230, 215, `+${n}`, false);
     }
 
     if (this.sim.timeSec >= RUNTIME.roundDurationSec) {
@@ -198,10 +215,10 @@ export class GameScene extends Phaser.Scene {
     this.refreshSource();
 
     const afterRate = this.sim.scoreRate;
-    if (afterRate >= beforeRate * 1.5) {
-      this.shake(1);
-      spawnPopup(this, WIDTH / 2, 300, `x${(afterRate / beforeRate).toFixed(1)}`, true);
-    }
+    this.peakRate = Math.max(this.peakRate, afterRate);
+    // Show what the pick did to the rate, e.g. "12.0 -> 24.0 /s".
+    spawnPopup(this, WIDTH / 2, 300, `${beforeRate.toFixed(1)} → ${afterRate.toFixed(1)} /s`, true);
+    if (afterRate >= beforeRate * 1.5) this.shake(1);
   }
 
   private endRound(): void {
@@ -210,7 +227,14 @@ export class GameScene extends Phaser.Scene {
     const score = Math.floor(this.sim.score);
     const previousBest = loadBest();
     const saved = score > previousBest ? saveBest(score) : true;
-    const result: RoundResult = { score, previousBest, saved };
+    const result: RoundResult = {
+      score,
+      previousBest,
+      saved,
+      line: this.sim.line.map((m) => m.id),
+      speedCount: this.sim.speedCount,
+      peakRate: this.peakRate,
+    };
     this.scene.start('Result', result);
   }
 
@@ -233,11 +257,14 @@ export class GameScene extends Phaser.Scene {
     this.lineGfx.lineStyle(6, 0x2b3642, 1);
     this.lineGfx.lineBetween(SOURCE_X, LINE_Y, BIN_X, LINE_Y);
 
-    // Source
+    // Source: rate under it, boost time left above it while boosted.
     this.boostRing = this.add.circle(SOURCE_X, LINE_Y, 46, 0xffb74d, 0).setStrokeStyle(5, 0xffb74d, 0);
     this.sourceShape = this.add.circle(SOURCE_X, LINE_Y, 36, 0x81c784, 1);
     this.sourceText = this.add
       .text(SOURCE_X, LINE_Y + 62, '', { fontFamily: FONT, fontSize: '24px', color: '#9fb3c8' })
+      .setOrigin(0.5);
+    this.boostText = this.add
+      .text(SOURCE_X, LINE_Y - 66, '', { fontFamily: FONT, fontSize: '22px', color: '#ffb74d', fontStyle: 'bold' })
       .setOrigin(0.5);
 
     // Bin
@@ -246,7 +273,7 @@ export class GameScene extends Phaser.Scene {
 
   private buildBallPool(): void {
     for (let i = 0; i < BALANCE.visuals.maxBalls; i++) {
-      const shape = this.add.circle(0, 0, 9, 0xe8eef4, 1).setVisible(false).setDepth(10);
+      const shape = this.add.circle(0, 0, 9, BALL_COLOR, 1).setVisible(false).setDepth(10);
       this.balls.push({ shape, nextMachine: 0, splits: 0, active: false });
     }
   }
@@ -259,8 +286,25 @@ export class GameScene extends Phaser.Scene {
   }
 
   private refreshSource(): void {
-    this.sourceText.setText(`${this.sim.sourceRate.toFixed(1)}`);
-    this.boostRing.setStrokeStyle(5, 0xffb74d, this.sim.boostActive ? 1 : 0);
+    this.sourceText.setText(`${this.sim.sourceRate.toFixed(1)} /s`);
+    const active = this.sim.boostActive;
+    this.boostRing.setStrokeStyle(5, 0xffb74d, active ? 1 : 0);
+    this.boostText.setText(active ? `${this.sim.boostRemainingSec.toFixed(1)}s` : '');
+  }
+
+  /** Accelerator: balls counted toward the next trigger. Press: share of balls processed. */
+  private refreshMachineStatus(): void {
+    const accel = BALANCE.machines.accelerator;
+    this.sim.line.forEach((m, i) => {
+      const status = this.machineNodes[i]?.status;
+      if (!status) return;
+      if (m.id === 'accelerator') {
+        status.setText(`${Math.floor(m.accum)}/${accel.ballsPerTrigger}`);
+      } else if (m.id === 'press') {
+        status.setText(`${Math.round(m.processed * 100)}%`);
+        status.setColor(m.processed >= 0.999 ? '#9fb3c8' : '#ffb74d');
+      }
+    });
   }
 
   private flashBoost(): void {
@@ -278,7 +322,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private layoutMachines(): void {
-    for (const n of this.machineNodes) n.destroy();
+    for (const n of this.machineNodes) n.container.destroy();
     this.machineNodes = [];
     this.machineXs = [];
 
@@ -292,9 +336,10 @@ export class GameScene extends Phaser.Scene {
       this.machineXs.push(x);
       this.machineNodes.push(this.makeMachineNode(m.id, x));
     });
+    this.refreshMachineStatus();
   }
 
-  private makeMachineNode(id: MachineId, x: number): Phaser.GameObjects.Container {
+  private makeMachineNode(id: MachineId, x: number): MachineNode {
     const def = BALANCE.machineDefs.find((d) => d.id === id)!;
     const c = this.add.container(x, LINE_Y).setDepth(5);
     const g = this.add.graphics();
@@ -303,13 +348,21 @@ export class GameScene extends Phaser.Scene {
       .text(0, 52, def.figure, { fontFamily: FONT, fontSize: '20px', color: '#9fb3c8' })
       .setOrigin(0.5);
     c.add([g, label]);
+
+    let status: Phaser.GameObjects.Text | null = null;
+    if (id === 'accelerator' || id === 'press') {
+      status = this.add.text(0, 76, '', { fontFamily: FONT, fontSize: '18px', color: '#9fb3c8' }).setOrigin(0.5);
+      c.add(status);
+    }
+
     c.setScale(0.6);
     this.tweens.add({ targets: c, scale: 1, duration: 200, ease: 'Back.Out' });
-    return c;
+    return { container: c, status };
   }
 
   // Visual balls are cosmetic. Production is computed in Simulation; the shapes only show its
-  // structure: a capped stream from the source, and more balls after each splitter.
+  // structure: a capped stream from the source, more balls after each splitter, and the share
+  // of balls a press processes (purple with an outline) versus lets through (white).
   private updateBalls(dt: number): void {
     const v = BALANCE.visuals;
     this.spawnAcc += Math.min(this.sim.sourceRate, v.maxSpawnPerSec) * dt;
@@ -324,9 +377,9 @@ export class GameScene extends Phaser.Scene {
       b.shape.x += dx;
 
       while (b.nextMachine < this.machineXs.length && b.shape.x >= this.machineXs[b.nextMachine]) {
-        const id = this.sim.line[b.nextMachine].id;
+        const machine = this.sim.line[b.nextMachine];
         b.nextMachine += 1;
-        if (id === 'splitter' && b.splits < v.maxVisualSplits) {
+        if (machine.id === 'splitter' && b.splits < v.maxVisualSplits) {
           // Every ball of a lineage doubles at each of the first maxVisualSplits splitters it meets,
           // so one source ball becomes exactly 2^maxVisualSplits shapes and never more.
           b.splits += 1;
@@ -334,11 +387,13 @@ export class GameScene extends Phaser.Scene {
           const twin = this.spawnBall(b.shape.x, y, b.nextMachine, false);
           if (twin) {
             twin.splits = b.splits;
-            twin.shape.setScale(b.shape.scale);
+            twin.shape.setFillStyle(b.shape.fillColor, 1);
+            twin.shape.setStrokeStyle(b.shape.lineWidth, b.shape.strokeColor, b.shape.strokeAlpha);
           }
-        } else if (id === 'doubler') {
-          // Value is shown by size, count by number of shapes.
-          b.shape.setScale(Math.min(2.2, b.shape.scale * 1.3));
+        } else if (machine.id === 'press' && this.fxRng.next() < machine.processed) {
+          // The processed share of balls is shown with the press colour and an outline.
+          b.shape.setFillStyle(PRESSED_COLOR, 1);
+          b.shape.setStrokeStyle(3, BALL_COLOR, 1);
         }
       }
 
@@ -358,7 +413,9 @@ export class GameScene extends Phaser.Scene {
     b.active = true;
     b.nextMachine = nextMachine;
     b.splits = 0;
-    b.shape.setPosition(x, y).setScale(1).setVisible(true);
+    b.shape.setPosition(x, y).setVisible(true);
+    b.shape.setFillStyle(BALL_COLOR, 1);
+    b.shape.setStrokeStyle(0, BALL_COLOR, 0);
     return b;
   }
 

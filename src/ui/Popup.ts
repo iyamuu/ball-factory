@@ -14,9 +14,9 @@ export function spawnPopup(scene: Phaser.Scene, x: number, y: number, text: stri
     .setDepth(50);
   scene.tweens.add({
     targets: t,
-    y: y - 70,
+    y: y - (big ? 60 : 40),
     alpha: 0,
-    duration: 700,
+    duration: big ? 900 : 480,
     ease: 'Cubic.Out',
     onComplete: () => t.destroy(),
   });

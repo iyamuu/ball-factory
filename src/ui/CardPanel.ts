@@ -81,16 +81,25 @@ export class CardPanel extends Phaser.GameObjects.Container {
     bg.on('pointerout', () => c.setScale(1));
 
     const g = scene.add.graphics();
-    drawMachineIcon(g, def.id, 0, -60, 90, def.color);
+    drawMachineIcon(g, def.id, 0, -78, 84, def.color);
 
     const label = scene.add
-      .text(0, 40, def.label, { fontFamily: FONT, fontSize: '30px', color: '#e8eef4', fontStyle: 'bold' })
+      .text(0, 8, def.label, { fontFamily: FONT, fontSize: '28px', color: '#e8eef4', fontStyle: 'bold' })
       .setOrigin(0.5);
     const figure = scene.add
-      .text(0, 95, def.figure, { fontFamily: FONT, fontSize: '40px', color: Phaser.Display.Color.IntegerToColor(def.color).rgba, fontStyle: 'bold' })
+      .text(0, 56, def.figure, { fontFamily: FONT, fontSize: '38px', color: Phaser.Display.Color.IntegerToColor(def.color).rgba, fontStyle: 'bold' })
+      .setOrigin(0.5);
+    const desc = scene.add
+      .text(0, 112, def.desc, {
+        fontFamily: FONT,
+        fontSize: '17px',
+        color: '#9fb3c8',
+        align: 'center',
+        wordWrap: { width: CARD_W - 24 },
+      })
       .setOrigin(0.5);
 
-    c.add([bg, g, label, figure]);
+    c.add([bg, g, label, figure, desc]);
     return c;
   }
 }
