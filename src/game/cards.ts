@@ -20,7 +20,8 @@ export function machineDef(id: MachineId): MachineDef {
  * always show the same candidates at the same times.
  */
 export function generateOffers(seed: number, roundDurationSec: number): Offer[] {
-  // Offers are scheduled for the base round length; EXTEND adds time after the last offer.
+  // Offers are scheduled up to the longest possible round (base length plus every EXTEND);
+  // the game shows an offer only if the round has not ended before its time.
   const rng = new Rng(seed);
   const { firstOfferAtSec, intervalSec, choices } = BALANCE.cards;
   const offers: Offer[] = [];
