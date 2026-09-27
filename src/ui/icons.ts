@@ -46,6 +46,14 @@ export function drawMachineIcon(
       );
       break;
     }
+    case 'extend': {
+      // Clock: ring with two hands.
+      g.lineStyle(size * 0.12, color, 1);
+      g.strokeCircle(x, y, r * 0.9);
+      g.lineBetween(x, y, x, y - r * 0.55);
+      g.lineBetween(x, y, x + r * 0.4, y + r * 0.2);
+      break;
+    }
     case 'speed': {
       // Two stacked chevrons.
       const t = size * 0.18;

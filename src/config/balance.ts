@@ -3,7 +3,7 @@
  * Time values are in seconds unless the name says otherwise.
  */
 
-export type MachineId = 'splitter' | 'accelerator' | 'press' | 'speed';
+export type MachineId = 'splitter' | 'accelerator' | 'press' | 'speed' | 'extend';
 
 export interface MachineDef {
   id: MachineId;
@@ -32,8 +32,12 @@ const MACHINES = {
     boostSecPerTrigger: 3,
     /** Remaining boost time is capped here. */
     maxBoostSec: 6,
-    /** Production rate multiplier while boost is active. Not stacked across accelerators. */
-    rateMultiplier: 1.5,
+    /**
+     * Production rate multiplier while boost is active. Not stacked across accelerators.
+     * 2.0 chosen by brute force: at 1.5 ACCEL never appeared in an optimal pick sequence on six
+     * seeds; at 2.0 it appears in three of six without displacing SPLIT/PRESS (docs/DESIGN.md).
+     */
+    rateMultiplier: 2.0,
   },
   press: {
     /** Value multiplier for processed balls. */
@@ -55,6 +59,10 @@ const MACHINES = {
   speed: {
     /** Source base rate multiplier. */
     multiplier: 1.5,
+  },
+  extend: {
+    /** Seconds added to the round. Offers are not added; the extra time runs after the last offer. */
+    seconds: 5,
   },
 } as const;
 
@@ -80,8 +88,12 @@ export const BALANCE = {
     intervalSec: 8,
     /** Number of cards shown per offer. Must be <= number of machine kinds. */
     choices: 3,
-    /** Fixed seed: every round shows the same offer sequence so runs can be compared. */
-    seed: 7,
+    /**
+     * Offer seed. null: a new random seed every round (shown on the result screen, and the
+     * player can replay the same seed). A number fixes the sequence for every round, which
+     * is what the ?seed= URL parameter does for testing and comparison.
+     */
+    seed: null as number | null,
   },
 
   machines: MACHINES,
@@ -100,7 +112,7 @@ export const BALANCE = {
       id: 'accelerator',
       label: 'ACCEL',
       figure: `${MACHINES.accelerator.ballsPerTrigger} > ${MACHINES.accelerator.boostSecPerTrigger}s`,
-      desc: `Every ${MACHINES.accelerator.ballsPerTrigger} balls: +${Math.round((MACHINES.accelerator.rateMultiplier - 1) * 100)}% speed for ${MACHINES.accelerator.boostSecPerTrigger}s`,
+      desc: `Every ${MACHINES.accelerator.ballsPerTrigger} balls: speed x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`,
       color: 0xffb74d,
       onLine: true,
     },
@@ -120,6 +132,14 @@ export const BALANCE = {
       figure: `x${MACHINES.speed.multiplier}`,
       desc: `Source speed x${MACHINES.speed.multiplier}`,
       color: 0x81c784,
+      onLine: false,
+    },
+    {
+      id: 'extend',
+      label: 'EXTEND',
+      figure: `+${MACHINES.extend.seconds}s`,
+      desc: `Round +${MACHINES.extend.seconds} seconds`,
+      color: 0xfff176,
       onLine: false,
     },
   ] as MachineDef[],

@@ -10,17 +10,17 @@ export class ResultScene extends Phaser.Scene {
   }
 
   create(data: RoundResult): void {
-    const { score, previousBest, saved, line, speedCount, peakRate } = data;
+    const { score, previousBest, saved, line, speedCount, extendCount, peakRate, seed } = data;
     const isNewBest = score > previousBest;
     const best = Math.max(score, previousBest);
 
     (window as unknown as { __bfResult: RoundResult }).__bfResult = data;
 
     this.add
-      .text(WIDTH / 2, 110, 'SCORE', { fontFamily: FONT, fontSize: '32px', color: '#9fb3c8' })
+      .text(WIDTH / 2, 100, 'SCORE', { fontFamily: FONT, fontSize: '32px', color: '#9fb3c8' })
       .setOrigin(0.5);
     this.add
-      .text(WIDTH / 2, 200, score.toLocaleString('en-US'), {
+      .text(WIDTH / 2, 190, score.toLocaleString('en-US'), {
         fontFamily: FONT,
         fontSize: '120px',
         color: '#ffffff',
@@ -38,23 +38,34 @@ export class ResultScene extends Phaser.Scene {
       diffColor = '#9fb3c8';
     }
     this.add
-      .text(WIDTH / 2, 295, diffText, { fontFamily: FONT, fontSize: '36px', color: diffColor, fontStyle: 'bold' })
+      .text(WIDTH / 2, 285, diffText, { fontFamily: FONT, fontSize: '36px', color: diffColor, fontStyle: 'bold' })
       .setOrigin(0.5);
 
-    // Build: source speed upgrades, then the line in order, then the peak rate.
-    this.drawBuild(380, line, speedCount);
+    // Build: source upgrades and time extensions first, then the line in order, then the peak rate.
+    this.drawBuild(365, line, [
+      { id: 'speed', count: speedCount },
+      { id: 'extend', count: extendCount },
+    ]);
     this.add
-      .text(WIDTH / 2, 450, `PEAK ${peakRate.toFixed(1)} /s`, { fontFamily: FONT, fontSize: '28px', color: '#9fb3c8' })
+      .text(WIDTH / 2, 435, `PEAK ${peakRate.toFixed(1)} /s`, { fontFamily: FONT, fontSize: '28px', color: '#9fb3c8' })
       .setOrigin(0.5);
 
-    // Retry button
-    const btn = this.add.rectangle(WIDTH / 2, 570, 360, 100, 0x4fc3f7, 1);
+    // Retry with a new seed (primary), or replay the same seed (small).
+    const btn = this.add.rectangle(WIDTH / 2, 545, 360, 100, 0x4fc3f7, 1);
     btn.setStrokeStyle(4, 0xe8eef4, 1);
     btn.setInteractive({ useHandCursor: true });
     this.add
-      .text(WIDTH / 2, 570, 'RETRY', { fontFamily: FONT, fontSize: '48px', color: '#101418', fontStyle: 'bold' })
+      .text(WIDTH / 2, 545, 'RETRY', { fontFamily: FONT, fontSize: '48px', color: '#101418', fontStyle: 'bold' })
       .setOrigin(0.5);
-    btn.on('pointerdown', () => this.scene.start('Game'));
+    // An explicit empty object: Phaser keeps the previous scene data (e.g. a SAME SEED replay) when data is falsy.
+    btn.on('pointerdown', () => this.scene.start('Game', {}));
+
+    const same = this.add
+      .text(WIDTH / 2, 640, `SAME SEED ${seed}`, { fontFamily: FONT, fontSize: '22px', color: '#9fb3c8' })
+      .setOrigin(0.5)
+      .setPadding(16, 10, 16, 10);
+    same.setInteractive({ useHandCursor: true });
+    same.on('pointerdown', () => this.scene.start('Game', { seed }));
 
     if (!saved) {
       this.add
@@ -63,9 +74,9 @@ export class ResultScene extends Phaser.Scene {
     }
   }
 
-  private drawBuild(y: number, line: MachineId[], speedCount: number): void {
+  private drawBuild(y: number, line: MachineId[], upgrades: { id: MachineId; count: number }[]): void {
     const items: { id: MachineId; count?: number }[] = [];
-    if (speedCount > 0) items.push({ id: 'speed', count: speedCount });
+    for (const u of upgrades) if (u.count > 0) items.push(u);
     for (const id of line) items.push({ id });
     if (items.length === 0) return;
 
