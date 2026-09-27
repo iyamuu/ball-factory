@@ -40,7 +40,7 @@ export const BALANCE = {
     /** Number of cards shown per offer. Must be <= number of machine kinds. */
     choices: 3,
     /** Fixed seed: every round shows the same offer sequence so runs can be compared. */
-    seed: 20260927,
+    seed: 7,
   },
 
   machines: {
