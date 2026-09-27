@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { BALANCE } from '../config/balance';
+import { BALANCE, type MachineId } from '../config/balance';
 import { WIDTH, HEIGHT } from '../main';
 import { drawMachineIcon, FONT } from '../ui/icons';
 import type { RoundResult } from './GameScene';
@@ -63,8 +63,8 @@ export class ResultScene extends Phaser.Scene {
     }
   }
 
-  private drawBuild(y: number, line: RoundResult['line'], speedCount: number): void {
-    const items: { id: RoundResult['line'][number] | 'speed'; count?: number }[] = [];
+  private drawBuild(y: number, line: MachineId[], speedCount: number): void {
+    const items: { id: MachineId; count?: number }[] = [];
     if (speedCount > 0) items.push({ id: 'speed', count: speedCount });
     for (const id of line) items.push({ id });
     if (items.length === 0) return;

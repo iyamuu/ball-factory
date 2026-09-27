@@ -77,9 +77,9 @@ export class Simulation {
     // Boost that was active during this step is consumed now; boost added below applies next step.
     this.boostRemainingSec = Math.max(0, this.boostRemainingSec - dt);
 
-    const before = this.triggerCount;
-    const groups = this.runLine([{ count: rate * dt, value: BALANCE.production.baseValue }], dt, true);
-    const triggers = this.triggerCount - before;
+    const counter = { triggers: 0 };
+    const groups = this.runLine([{ count: rate * dt, value: BALANCE.production.baseValue }], dt, true, counter);
+    const triggers = counter.triggers;
 
     let gained = 0;
     let count = 0;
@@ -94,13 +94,12 @@ export class Simulation {
     return { gained, triggers, boostStarted: !wasActive && this.boostActive };
   }
 
-  private triggerCount = 0;
-
   /**
    * Passes a batch through the line. With `mutate` true, accelerators accumulate and add boost
-   * time and presses record their processed share; with false, nothing is changed.
+   * time (counted into `counter`) and presses record their processed share; with false, nothing
+   * is changed.
    */
-  private runLine(groups: Group[], dt: number, mutate: boolean): Group[] {
+  private runLine(groups: Group[], dt: number, mutate: boolean, counter = { triggers: 0 }): Group[] {
     for (const m of this.line) {
       switch (m.id) {
         case 'splitter':
@@ -115,7 +114,7 @@ export class Simulation {
               this.boostRemainingSec + this.accel.boostSecPerTrigger,
               this.accel.maxBoostSec,
             );
-            this.triggerCount += 1;
+            counter.triggers += 1;
           }
           break;
         }

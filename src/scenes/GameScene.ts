@@ -89,6 +89,7 @@ export class GameScene extends Phaser.Scene {
   private spawnAcc = 0;
   private popupAcc = 0;
   private popupGain = 0;
+  private pendingGainPopup = 0;
 
   constructor() {
     super('Game');
@@ -105,6 +106,7 @@ export class GameScene extends Phaser.Scene {
     this.spawnAcc = 0;
     this.popupAcc = 0;
     this.popupGain = 0;
+    this.pendingGainPopup = 0;
     this.peakRate = 0;
     this.fxRng = new Rng((Date.now() & 0xffffffff) >>> 0);
     this.machineNodes = [];
@@ -158,7 +160,9 @@ export class GameScene extends Phaser.Scene {
     // Visuals are cosmetic: clamp so balls do not teleport after a long frame.
     this.updateBalls(Math.min(dt, 0.1));
     this.refreshTexts();
+    this.refreshSource();
     this.refreshMachineStatus();
+    this.flushGainPopup();
   }
 
   // ---------------------------------------------------------------- simulation
@@ -173,14 +177,13 @@ export class GameScene extends Phaser.Scene {
       this.flashBoost();
       this.shake(0.5);
     }
-    this.refreshSource();
 
     if (this.popupAcc >= BALANCE.visuals.popupIntervalSec) {
       this.popupAcc = 0;
       const n = Math.floor(this.popupGain);
       this.popupGain -= n;
-      // One fixed lane to the right of the rate text; lifetime matches the interval so popups do not stack.
-      if (n > 0) spawnPopup(this, WIDTH / 2 + 230, 215, `+${n}`, false);
+      // Collected here and shown once per frame, so several steps in one frame make one popup.
+      this.pendingGainPopup += n;
     }
 
     if (this.sim.timeSec >= RUNTIME.roundDurationSec) {
@@ -216,8 +219,11 @@ export class GameScene extends Phaser.Scene {
 
     const afterRate = this.sim.scoreRate;
     this.peakRate = Math.max(this.peakRate, afterRate);
-    // Show what the pick did to the rate, e.g. "12.0 -> 24.0 /s".
-    spawnPopup(this, WIDTH / 2, 300, `${beforeRate.toFixed(1)} → ${afterRate.toFixed(1)} /s`, true);
+    // Show what the pick did to the rate, e.g. "12.0 -> 24.0 /s". A machine whose effect is
+    // deferred (ACCEL changes nothing until it triggers) shows its description instead.
+    const message =
+      afterRate !== beforeRate ? `${beforeRate.toFixed(1)} → ${afterRate.toFixed(1)} /s` : def.desc;
+    spawnPopup(this, WIDTH / 2, 300, message, true);
     if (afterRate >= beforeRate * 1.5) this.shake(1);
   }
 
@@ -307,6 +313,13 @@ export class GameScene extends Phaser.Scene {
     });
   }
 
+  /** One fixed lane to the right of the rate text; lifetime matches the interval so popups do not stack. */
+  private flushGainPopup(): void {
+    if (this.pendingGainPopup <= 0) return;
+    spawnPopup(this, WIDTH / 2 + 230, 215, `+${this.pendingGainPopup}`, false);
+    this.pendingGainPopup = 0;
+  }
+
   private flashBoost(): void {
     this.tweens.add({
       targets: this.sourceShape,
@@ -388,7 +401,7 @@ export class GameScene extends Phaser.Scene {
           if (twin) {
             twin.splits = b.splits;
             twin.shape.setFillStyle(b.shape.fillColor, 1);
-            twin.shape.setStrokeStyle(b.shape.lineWidth, b.shape.strokeColor, b.shape.strokeAlpha);
+            if (b.shape.isStroked) twin.shape.setStrokeStyle(b.shape.lineWidth, b.shape.strokeColor, b.shape.strokeAlpha);
           }
         } else if (machine.id === 'press' && this.fxRng.next() < machine.processed) {
           // The processed share of balls is shown with the press colour and an outline.
@@ -415,7 +428,7 @@ export class GameScene extends Phaser.Scene {
     b.splits = 0;
     b.shape.setPosition(x, y).setVisible(true);
     b.shape.setFillStyle(BALL_COLOR, 1);
-    b.shape.setStrokeStyle(0, BALL_COLOR, 0);
+    b.shape.setStrokeStyle(); // no arguments: stroke off (a width of 0 would keep isStroked true)
     return b;
   }
 

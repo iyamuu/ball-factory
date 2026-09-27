@@ -19,6 +19,34 @@ export interface MachineDef {
   onLine: boolean;
 }
 
+/** Machine effect numbers. Defined first so card text below can be derived from them. */
+const MACHINES = {
+  splitter: {
+    /** Each ball passing through becomes this many balls. */
+    multiplier: 2,
+  },
+  accelerator: {
+    /** Logical balls that must pass through to add one burst of boost time. */
+    ballsPerTrigger: 10,
+    /** Boost time added per trigger. */
+    boostSecPerTrigger: 3,
+    /** Remaining boost time is capped here. */
+    maxBoostSec: 6,
+    /** Production rate multiplier while boost is active. Not stacked across accelerators. */
+    rateMultiplier: 1.5,
+  },
+  press: {
+    /** Value multiplier for processed balls. */
+    multiplier: 2,
+    /** Balls per second the press can process. Balls above this pass through unchanged. */
+    capacityPerSec: 20,
+  },
+  speed: {
+    /** Source base rate multiplier. */
+    multiplier: 1.5,
+  },
+} as const;
+
 export const BALANCE = {
   round: {
     /** Round length. */
@@ -30,7 +58,7 @@ export const BALANCE = {
   production: {
     /** Balls per second produced by the source at the start of a round. */
     baseRate: 2,
-    /** Score value of one ball before any Doubler. */
+    /** Score value of one ball before any Press. */
     baseValue: 1,
   },
 
@@ -45,46 +73,42 @@ export const BALANCE = {
     seed: 7,
   },
 
-  machines: {
-    splitter: {
-      /** Each ball passing through becomes this many balls. */
-      multiplier: 2,
-    },
-    accelerator: {
-      /** Logical balls that must pass through to add one burst of boost time. */
-      ballsPerTrigger: 10,
-      /** Boost time added per trigger. */
-      boostSecPerTrigger: 3,
-      /** Remaining boost time is capped here. */
-      maxBoostSec: 6,
-      /** Production rate multiplier while boost is active. Not stacked across accelerators. */
-      rateMultiplier: 1.5,
-    },
-    press: {
-      /** Value multiplier for processed balls. */
-      multiplier: 2,
-      /** Balls per second the press can process. Balls above this pass through unchanged. */
-      capacityPerSec: 20,
-    },
-    speed: {
-      /** Source base rate multiplier. */
-      multiplier: 1.5,
-    },
-  },
+  machines: MACHINES,
 
-  /** Card definitions. Order here is the order used by the seeded draw. */
+  /** Card definitions. Order here is the order used by the seeded draw. Text is derived from MACHINES. */
   machineDefs: [
-    { id: 'splitter', label: 'SPLIT', figure: 'x2', desc: 'Balls x2', color: 0x4fc3f7, onLine: true },
+    {
+      id: 'splitter',
+      label: 'SPLIT',
+      figure: `x${MACHINES.splitter.multiplier}`,
+      desc: `Balls x${MACHINES.splitter.multiplier}`,
+      color: 0x4fc3f7,
+      onLine: true,
+    },
     {
       id: 'accelerator',
       label: 'ACCEL',
-      figure: '10 > 3s',
-      desc: 'Every 10 balls: +50% speed for 3s',
+      figure: `${MACHINES.accelerator.ballsPerTrigger} > ${MACHINES.accelerator.boostSecPerTrigger}s`,
+      desc: `Every ${MACHINES.accelerator.ballsPerTrigger} balls: +${Math.round((MACHINES.accelerator.rateMultiplier - 1) * 100)}% speed for ${MACHINES.accelerator.boostSecPerTrigger}s`,
       color: 0xffb74d,
       onLine: true,
     },
-    { id: 'press', label: 'PRESS', figure: 'x2', desc: 'Value x2, up to 20 balls/s', color: 0xba68c8, onLine: true },
-    { id: 'speed', label: 'SPEED', figure: 'x1.5', desc: 'Source speed x1.5', color: 0x81c784, onLine: false },
+    {
+      id: 'press',
+      label: 'PRESS',
+      figure: `x${MACHINES.press.multiplier}`,
+      desc: `Value x${MACHINES.press.multiplier}, up to ${MACHINES.press.capacityPerSec} balls/s`,
+      color: 0xba68c8,
+      onLine: true,
+    },
+    {
+      id: 'speed',
+      label: 'SPEED',
+      figure: `x${MACHINES.speed.multiplier}`,
+      desc: `Source speed x${MACHINES.speed.multiplier}`,
+      color: 0x81c784,
+      onLine: false,
+    },
   ] as MachineDef[],
 
   visuals: {
