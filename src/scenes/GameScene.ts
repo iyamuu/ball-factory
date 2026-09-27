@@ -38,6 +38,7 @@ interface DebugHook {
   pick: (index: number) => void;
   visibleBalls: () => number;
   remainingSec: () => number;
+  offers: () => MachineId[][];
 }
 
 export class GameScene extends Phaser.Scene {
@@ -97,6 +98,7 @@ export class GameScene extends Phaser.Scene {
       pick: (i) => this.pickCard(i),
       visibleBalls: () => this.balls.filter((b) => b.active).length,
       remainingSec: () => Math.max(0, RUNTIME.roundDurationSec - this.sim.timeSec),
+      offers: () => this.offers.map((o) => o.cards.map((c) => c.id)),
     };
     (window as unknown as { __bf: DebugHook }).__bf = hook;
   }
@@ -140,7 +142,7 @@ export class GameScene extends Phaser.Scene {
       this.popupGain -= n;
       if (n > 0) {
         const x = WIDTH / 2 + this.fxRng.range(-120, 120);
-        spawnPopup(this, x, 250, `+${n}`, false);
+        spawnPopup(this, x, 300, `+${n}`, false);
       }
     }
 
@@ -178,7 +180,7 @@ export class GameScene extends Phaser.Scene {
     const afterRate = this.sim.scoreRate;
     if (afterRate >= beforeRate * 1.5) {
       this.shake(1);
-      spawnPopup(this, WIDTH / 2, 250, `x${(afterRate / beforeRate).toFixed(1)}`, true);
+      spawnPopup(this, WIDTH / 2, 300, `x${(afterRate / beforeRate).toFixed(1)}`, true);
     }
   }
 
