@@ -100,6 +100,9 @@ export class Simulation {
    * is changed.
    */
   private runLine(groups: Group[], dt: number, mutate: boolean, counter = { triggers: 0 }): Group[] {
+    const press = BALANCE.machines.press;
+    // Shared mode: one processing budget for the whole line, spent by presses in order.
+    let pressBudget = press.capacityPerSec * dt;
     for (const m of this.line) {
       switch (m.id) {
         case 'splitter':
@@ -119,10 +122,10 @@ export class Simulation {
           break;
         }
         case 'press': {
-          const press = BALANCE.machines.press;
           const total = groups.reduce((s, g) => s + g.count, 0);
-          const capacity = press.capacityPerSec * dt;
+          const capacity = press.shared ? pressBudget : press.capacityPerSec * dt;
           const share = total <= 0 ? 1 : Math.min(1, capacity / total);
+          if (press.shared) pressBudget = Math.max(0, pressBudget - total * share);
           if (mutate) m.processed = share;
           // A proportional share of every group is processed; the rest passes unchanged.
           const next: Group[] = [];

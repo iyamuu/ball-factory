@@ -37,9 +37,20 @@ const MACHINES = {
   },
   press: {
     /** Value multiplier for processed balls. */
-    multiplier: 2,
-    /** Balls per second the press can process. Balls above this pass through unchanged. */
-    capacityPerSec: 20,
+    multiplier: 3,
+    /** Balls per second that can be processed. Balls above this pass through unchanged. */
+    capacityPerSec: 8,
+    /**
+     * true: capacityPerSec is one budget shared by every press on the line, spent in line order.
+     * false: every press has its own capacityPerSec.
+     *
+     * Chosen by brute force over every pick sequence (3^9) of seeded rounds: with a per-press
+     * budget and x2, PRESS ties with SPLIT while the flow is below the budget and is never
+     * chosen once above it; with a multiplier above 2 and a per-press budget, PRESS alone
+     * dominates. A shared budget with x3 gives optima that contain both SPLIT and PRESS with
+     * the budget binding (see docs/DESIGN.md).
+     */
+    shared: true,
   },
   speed: {
     /** Source base rate multiplier. */
@@ -97,7 +108,9 @@ export const BALANCE = {
       id: 'press',
       label: 'PRESS',
       figure: `x${MACHINES.press.multiplier}`,
-      desc: `Value x${MACHINES.press.multiplier}, up to ${MACHINES.press.capacityPerSec} balls/s`,
+      desc: MACHINES.press.shared
+        ? `Value x${MACHINES.press.multiplier}. All presses share ${MACHINES.press.capacityPerSec} balls/s`
+        : `Value x${MACHINES.press.multiplier}, up to ${MACHINES.press.capacityPerSec} balls/s`,
       color: 0xba68c8,
       onLine: true,
     },

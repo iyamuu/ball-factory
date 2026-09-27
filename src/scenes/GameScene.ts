@@ -22,7 +22,10 @@ const MAX_STEPS_PER_FRAME = 40;
 const MAX_FRAME_SEC = 1;
 
 const BALL_COLOR = 0xe8eef4;
-const PRESSED_COLOR = 0xba68c8;
+/** Fill colour by number of times a ball has been pressed (index 0 = never). Deeper each time. */
+const PRESSED_COLORS = [BALL_COLOR, 0xce93d8, 0xab47bc, 0x8e24aa, 0x6a1b9a];
+/** Outline width by number of times pressed; grows so a second press is visible on an already purple ball. */
+const PRESSED_STROKE = [0, 2, 4, 6, 8];
 
 interface VisualBall {
   shape: Phaser.GameObjects.Arc;
@@ -30,6 +33,8 @@ interface VisualBall {
   nextMachine: number;
   /** How many visual splits this ball's lineage has gone through since the source. */
   splits: number;
+  /** How many presses have processed this ball (drives colour and outline). */
+  pressed: number;
   active: boolean;
 }
 
@@ -280,7 +285,7 @@ export class GameScene extends Phaser.Scene {
   private buildBallPool(): void {
     for (let i = 0; i < BALANCE.visuals.maxBalls; i++) {
       const shape = this.add.circle(0, 0, 9, BALL_COLOR, 1).setVisible(false).setDepth(10);
-      this.balls.push({ shape, nextMachine: 0, splits: 0, active: false });
+      this.balls.push({ shape, nextMachine: 0, splits: 0, pressed: 0, active: false });
     }
   }
 
@@ -400,13 +405,14 @@ export class GameScene extends Phaser.Scene {
           const twin = this.spawnBall(b.shape.x, y, b.nextMachine, false);
           if (twin) {
             twin.splits = b.splits;
-            twin.shape.setFillStyle(b.shape.fillColor, 1);
-            if (b.shape.isStroked) twin.shape.setStrokeStyle(b.shape.lineWidth, b.shape.strokeColor, b.shape.strokeAlpha);
+            twin.pressed = b.pressed;
+            this.applyPressedStyle(twin);
           }
         } else if (machine.id === 'press' && this.fxRng.next() < machine.processed) {
-          // The processed share of balls is shown with the press colour and an outline.
-          b.shape.setFillStyle(PRESSED_COLOR, 1);
-          b.shape.setStrokeStyle(3, BALL_COLOR, 1);
+          // The processed share of balls gets a deeper colour and a thicker outline each time,
+          // so a second press on an already processed ball is visible.
+          b.pressed += 1;
+          this.applyPressedStyle(b);
         }
       }
 
@@ -426,10 +432,17 @@ export class GameScene extends Phaser.Scene {
     b.active = true;
     b.nextMachine = nextMachine;
     b.splits = 0;
+    b.pressed = 0;
     b.shape.setPosition(x, y).setVisible(true);
-    b.shape.setFillStyle(BALL_COLOR, 1);
-    b.shape.setStrokeStyle(); // no arguments: stroke off (a width of 0 would keep isStroked true)
+    this.applyPressedStyle(b);
     return b;
+  }
+
+  private applyPressedStyle(b: VisualBall): void {
+    const level = Math.min(b.pressed, PRESSED_COLORS.length - 1);
+    b.shape.setFillStyle(PRESSED_COLORS[level], 1);
+    if (level === 0) b.shape.setStrokeStyle(); // no arguments: stroke off (a width of 0 would keep isStroked true)
+    else b.shape.setStrokeStyle(PRESSED_STROKE[level], BALL_COLOR, 1);
   }
 
   private get activeBallCount(): number {
