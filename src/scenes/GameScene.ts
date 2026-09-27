@@ -16,6 +16,10 @@ const BIN_X = 1170;
 const FIRST_MACHINE_X = 250;
 const LAST_MACHINE_X = 1090;
 const MAX_SPACING = 110;
+/** Upper bound on simulation steps run in one frame (2 s of sim time at the default step). */
+const MAX_STEPS_PER_FRAME = 40;
+/** A frame longer than this is treated as a stall, not as elapsed play time. */
+const MAX_FRAME_SEC = 1;
 
 interface VisualBall {
   shape: Phaser.GameObjects.Arc;
@@ -48,6 +52,7 @@ export class GameScene extends Phaser.Scene {
   private paused = false;
   private ended = false;
   private simAccumulator = 0;
+  private skipNextDelta = true;
   private fxRng!: Rng;
 
   private timerText!: Phaser.GameObjects.Text;
@@ -77,6 +82,7 @@ export class GameScene extends Phaser.Scene {
     this.paused = false;
     this.ended = false;
     this.simAccumulator = 0;
+    this.skipNextDelta = true;
     this.spawnAcc = 0;
     this.popupAcc = 0;
     this.popupGain = 0;
@@ -104,21 +110,31 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, deltaMs: number): void {
-    if (this.ended) return;
+    if (this.ended || this.paused) return;
 
-    const dt = Math.min(deltaMs / 1000, 0.1);
-    if (this.paused) return;
+    // The first delta after create() includes scene construction time; do not count it as play time.
+    if (this.skipNextDelta) {
+      this.skipNextDelta = false;
+      return;
+    }
 
-    // Fixed-step simulation, independent of frame rate.
+    // Fixed-step simulation, independent of frame rate. The full elapsed time is kept so a slow
+    // device does not stretch the round; only the catch-up work per frame is bounded, and any
+    // remainder is carried over to the next frame. A single frame longer than MAX_FRAME_SEC is
+    // treated as a stall (debugger, OS sleep) rather than play time.
+    const dt = Math.min(deltaMs / 1000, MAX_FRAME_SEC);
     this.simAccumulator += dt;
     const step = BALANCE.round.simStepSec;
-    while (this.simAccumulator >= step) {
+    let steps = 0;
+    while (this.simAccumulator >= step && steps < MAX_STEPS_PER_FRAME) {
       this.simAccumulator -= step;
       this.runSimStep(step);
+      steps += 1;
       if (this.paused || this.ended) break;
     }
 
-    this.updateBalls(dt);
+    // Visuals are cosmetic: clamp so balls do not teleport after a long frame.
+    this.updateBalls(Math.min(dt, 0.1));
     this.refreshTexts();
   }
 

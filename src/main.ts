@@ -15,5 +15,9 @@ new Phaser.Game({
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
   },
+  // Phaser's delta smoothing replaces frames slower than 200 ms with an older value, which
+  // silently drops elapsed time on slow devices. The simulation runs on a fixed step from the
+  // raw delta instead, so the round length matches wall-clock time.
+  fps: { smoothStep: false },
   scene: [GameScene, ResultScene],
 });
