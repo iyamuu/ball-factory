@@ -25,6 +25,8 @@ interface VisualBall {
   shape: Phaser.GameObjects.Arc;
   /** Index of the next line machine this ball has not passed yet. */
   nextMachine: number;
+  /** How many visual splits this ball's lineage has gone through since the source. */
+  splits: number;
   active: boolean;
 }
 
@@ -41,6 +43,7 @@ interface DebugHook {
   offersShown: () => number;
   pick: (index: number) => void;
   visibleBalls: () => number;
+  ballXs: () => number[];
   remainingSec: () => number;
   offers: () => MachineId[][];
 }
@@ -102,7 +105,8 @@ export class GameScene extends Phaser.Scene {
       isPaused: () => this.paused,
       offersShown: () => this.nextOffer,
       pick: (i) => this.pickCard(i),
-      visibleBalls: () => this.balls.filter((b) => b.active).length,
+      visibleBalls: () => this.activeBallCount,
+      ballXs: () => this.balls.filter((b) => b.active).map((b) => b.shape.x),
       remainingSec: () => Math.max(0, RUNTIME.roundDurationSec - this.sim.timeSec),
       offers: () => this.offers.map((o) => o.cards.map((c) => c.id)),
     };
@@ -243,7 +247,7 @@ export class GameScene extends Phaser.Scene {
   private buildBallPool(): void {
     for (let i = 0; i < BALANCE.visuals.maxBalls; i++) {
       const shape = this.add.circle(0, 0, 9, 0xe8eef4, 1).setVisible(false).setDepth(10);
-      this.balls.push({ shape, nextMachine: 0, active: false });
+      this.balls.push({ shape, nextMachine: 0, splits: 0, active: false });
     }
   }
 
@@ -304,13 +308,14 @@ export class GameScene extends Phaser.Scene {
     return c;
   }
 
-  // Visual balls are cosmetic: capped pool, capped spawn rate. Production is computed in Simulation.
+  // Visual balls are cosmetic. Production is computed in Simulation; the shapes only show its
+  // structure: a capped stream from the source, and more balls after each splitter.
   private updateBalls(dt: number): void {
     const v = BALANCE.visuals;
     this.spawnAcc += Math.min(this.sim.sourceRate, v.maxSpawnPerSec) * dt;
     while (this.spawnAcc >= 1) {
       this.spawnAcc -= 1;
-      this.spawnBall(SOURCE_X + 36, LINE_Y + this.fxRng.range(-10, 10), 0, 1);
+      this.spawnBall(SOURCE_X + 36, LINE_Y + this.fxRng.range(-10, 10), 0, true);
     }
 
     const dx = v.ballSpeedPx * dt;
@@ -321,10 +326,18 @@ export class GameScene extends Phaser.Scene {
       while (b.nextMachine < this.machineXs.length && b.shape.x >= this.machineXs[b.nextMachine]) {
         const id = this.sim.line[b.nextMachine].id;
         b.nextMachine += 1;
-        if (id === 'splitter') {
-          const twin = this.spawnBall(b.shape.x, b.shape.y - 14, b.nextMachine, b.shape.scale);
-          if (twin) b.shape.y += 14;
+        if (id === 'splitter' && b.splits < v.maxVisualSplits) {
+          // Every ball of a lineage doubles at each of the first maxVisualSplits splitters it meets,
+          // so one source ball becomes exactly 2^maxVisualSplits shapes and never more.
+          b.splits += 1;
+          const y = LINE_Y + this.fxRng.range(-v.laneHalfWidthPx, v.laneHalfWidthPx);
+          const twin = this.spawnBall(b.shape.x, y, b.nextMachine, false);
+          if (twin) {
+            twin.splits = b.splits;
+            twin.shape.setScale(b.shape.scale);
+          }
         } else if (id === 'doubler') {
+          // Value is shown by size, count by number of shapes.
           b.shape.setScale(Math.min(2.2, b.shape.scale * 1.3));
         }
       }
@@ -336,12 +349,22 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private spawnBall(x: number, y: number, nextMachine: number, scale: number): VisualBall | null {
+  /** Takes a shape from the pool. Copies made by splitters leave `sourceReserve` shapes for the source. */
+  private spawnBall(x: number, y: number, nextMachine: number, fromSource: boolean): VisualBall | null {
+    const v = BALANCE.visuals;
+    if (!fromSource && this.activeBallCount >= v.maxBalls - v.sourceReserve) return null;
     const b = this.balls.find((ball) => !ball.active);
     if (!b) return null;
     b.active = true;
     b.nextMachine = nextMachine;
-    b.shape.setPosition(x, y).setScale(scale).setVisible(true);
+    b.splits = 0;
+    b.shape.setPosition(x, y).setScale(1).setVisible(true);
     return b;
+  }
+
+  private get activeBallCount(): number {
+    let n = 0;
+    for (const b of this.balls) if (b.active) n++;
+    return n;
   }
 }
