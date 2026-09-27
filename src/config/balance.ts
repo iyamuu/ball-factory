@@ -1,0 +1,100 @@
+/**
+ * All gameplay numbers live here. Everything is a provisional value for the prototype.
+ * Time values are in seconds unless the name says otherwise.
+ */
+
+export type MachineId = 'splitter' | 'accelerator' | 'doubler' | 'speed';
+
+export interface MachineDef {
+  id: MachineId;
+  /** Short label shown on the card. Keep it to a word or two. */
+  label: string;
+  /** Number shown on the card below the label (e.g. "x2"). */
+  figure: string;
+  /** Display colour. */
+  color: number;
+  /** True if the machine is placed on the line. Speed upgrades the source instead. */
+  onLine: boolean;
+}
+
+export const BALANCE = {
+  round: {
+    /** Round length. */
+    durationSec: 70,
+    /** Simulation step. Production is integrated at this fixed step, independent of frame rate. */
+    simStepSec: 0.05,
+  },
+
+  production: {
+    /** Balls per second produced by the source at the start of a round. */
+    baseRate: 2,
+    /** Score value of one ball before any Doubler. */
+    baseValue: 1,
+  },
+
+  cards: {
+    /** Sim-time of the first offer. */
+    firstOfferAtSec: 3,
+    /** Sim-time between offers (measured from the previous offer). */
+    intervalSec: 8,
+    /** Number of cards shown per offer. Must be <= number of machine kinds. */
+    choices: 3,
+    /** Fixed seed: every round shows the same offer sequence so runs can be compared. */
+    seed: 20260927,
+  },
+
+  machines: {
+    splitter: {
+      /** Each ball passing through becomes this many balls. */
+      multiplier: 2,
+    },
+    accelerator: {
+      /** Logical balls that must pass through to add one burst of boost time. */
+      ballsPerTrigger: 10,
+      /** Boost time added per trigger. */
+      boostSecPerTrigger: 3,
+      /** Remaining boost time is capped here. */
+      maxBoostSec: 6,
+      /** Production rate multiplier while boost is active. Not stacked across accelerators. */
+      rateMultiplier: 1.5,
+    },
+    doubler: {
+      /** Ball value multiplier. */
+      multiplier: 2,
+    },
+    speed: {
+      /** Source base rate multiplier. */
+      multiplier: 1.5,
+    },
+  },
+
+  /** Card definitions. Order here is the order used by the seeded draw. */
+  machineDefs: [
+    { id: 'splitter', label: 'SPLIT', figure: 'x2', color: 0x4fc3f7, onLine: true },
+    { id: 'accelerator', label: 'ACCEL', figure: '10 > 3s', color: 0xffb74d, onLine: true },
+    { id: 'doubler', label: 'VALUE', figure: 'x2', color: 0xba68c8, onLine: true },
+    { id: 'speed', label: 'SPEED', figure: 'x1.5', color: 0x81c784, onLine: false },
+  ] as MachineDef[],
+
+  visuals: {
+    /** Maximum number of ball shapes drawn at once. Production is not limited by this. */
+    maxBalls: 80,
+    /** Maximum ball shapes spawned per second at the source. */
+    maxSpawnPerSec: 12,
+    /** Pixels per second a ball shape travels along the line. */
+    ballSpeedPx: 260,
+    /** Interval between "+N" popups. */
+    popupIntervalSec: 0.5,
+  },
+
+  shake: {
+    /** Set to false to disable all camera shake. */
+    enabled: true,
+    durationMs: 120,
+    intensity: 0.004,
+  },
+
+  storage: {
+    key: 'ball-factory.v1',
+  },
+} as const;
