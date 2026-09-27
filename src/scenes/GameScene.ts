@@ -25,6 +25,8 @@ interface VisualBall {
   shape: Phaser.GameObjects.Arc;
   /** Index of the next line machine this ball has not passed yet. */
   nextMachine: number;
+  /** How many visual splits this ball's lineage has gone through since the source. */
+  splits: number;
   active: boolean;
 }
 
@@ -245,7 +247,7 @@ export class GameScene extends Phaser.Scene {
   private buildBallPool(): void {
     for (let i = 0; i < BALANCE.visuals.maxBalls; i++) {
       const shape = this.add.circle(0, 0, 9, 0xe8eef4, 1).setVisible(false).setDepth(10);
-      this.balls.push({ shape, nextMachine: 0, active: false });
+      this.balls.push({ shape, nextMachine: 0, splits: 0, active: false });
     }
   }
 
@@ -316,13 +318,6 @@ export class GameScene extends Phaser.Scene {
       this.spawnBall(SOURCE_X + 36, LINE_Y + this.fxRng.range(-10, 10), 0, true);
     }
 
-    // Probability that a splitter copies a ball. 1 while 2^splitters <= maxVisualMultiplier;
-    // lower when there are more splitters, so that one source ball never becomes more than
-    // maxVisualMultiplier shapes while every splitter still adds some.
-    const splitters = this.sim.line.filter((m) => m.id === 'splitter').length;
-    const factor = splitters === 0 ? 1 : Math.min(2, Math.pow(v.maxVisualMultiplier, 1 / splitters));
-    const splitChance = factor - 1;
-
     const dx = v.ballSpeedPx * dt;
     for (const b of this.balls) {
       if (!b.active) continue;
@@ -331,10 +326,16 @@ export class GameScene extends Phaser.Scene {
       while (b.nextMachine < this.machineXs.length && b.shape.x >= this.machineXs[b.nextMachine]) {
         const id = this.sim.line[b.nextMachine].id;
         b.nextMachine += 1;
-        if (id === 'splitter' && this.fxRng.next() < splitChance) {
+        if (id === 'splitter' && b.splits < v.maxVisualSplits) {
+          // Every ball of a lineage doubles at each of the first maxVisualSplits splitters it meets,
+          // so one source ball becomes exactly 2^maxVisualSplits shapes and never more.
+          b.splits += 1;
           const y = LINE_Y + this.fxRng.range(-v.laneHalfWidthPx, v.laneHalfWidthPx);
           const twin = this.spawnBall(b.shape.x, y, b.nextMachine, false);
-          if (twin) twin.shape.setScale(b.shape.scale);
+          if (twin) {
+            twin.splits = b.splits;
+            twin.shape.setScale(b.shape.scale);
+          }
         } else if (id === 'doubler') {
           // Value is shown by size, count by number of shapes.
           b.shape.setScale(Math.min(2.2, b.shape.scale * 1.3));
@@ -356,6 +357,7 @@ export class GameScene extends Phaser.Scene {
     if (!b) return null;
     b.active = true;
     b.nextMachine = nextMachine;
+    b.splits = 0;
     b.shape.setPosition(x, y).setScale(1).setVisible(true);
     return b;
   }

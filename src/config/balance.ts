@@ -79,7 +79,7 @@ export const BALANCE = {
   visuals: {
     /**
      * Safety limit on ball shapes drawn at once. Production is not limited by this, and with the
-     * values below the limit is normally not reached: at most maxSpawnPerSec * maxVisualMultiplier
+     * values below the limit is normally not reached: at most maxSpawnPerSec * 2^maxVisualSplits
      * balls enter the line per second, and a ball takes about 4 s to cross it.
      */
     maxBalls: 300,
@@ -88,11 +88,11 @@ export const BALANCE = {
     /** Maximum ball shapes spawned per second at the source. */
     maxSpawnPerSec: 8,
     /**
-     * Maximum number of shapes one source ball can become through visual splitting. When the line
-     * has more splitters than log2 of this, each splitter copies a ball with a probability chosen
-     * so that the product over the line still equals this value. Every splitter still adds balls.
+     * How many times one source ball (and its copies) can be split visually. Each split doubles,
+     * so a source ball becomes at most 2^maxVisualSplits shapes. Splitters beyond that let the
+     * balls pass unchanged; production is not affected.
      */
-    maxVisualMultiplier: 8,
+    maxVisualSplits: 3,
     /** Half height of the band, in pixels, that balls are spread over after a split. */
     laneHalfWidthPx: 40,
     /** Pixels per second a ball shape travels along the line. */
