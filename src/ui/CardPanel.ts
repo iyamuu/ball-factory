@@ -6,6 +6,8 @@ import { drawMachineIcon, FONT } from './icons';
 const CARD_W = 240;
 const CARD_H = 300;
 const GAP = 60;
+/** Alpha of a card that is shown but cannot be picked. */
+const DISABLED_ALPHA = 0.35;
 
 /**
  * Full-screen overlay with the offered cards. Blocks input to the scene below
@@ -28,7 +30,8 @@ export class CardPanel extends Phaser.GameObjects.Container {
     this.setActive(false);
   }
 
-  show(defs: MachineDef[], onPick: (index: number) => void): void {
+  /** `disabled[i]` shows card i greyed out and not selectable (e.g. EXTEND at its per-round cap). */
+  show(defs: MachineDef[], onPick: (index: number) => void, disabled: boolean[] = []): void {
     this.clearCards();
     this.onPick = onPick;
 
@@ -36,7 +39,8 @@ export class CardPanel extends Phaser.GameObjects.Container {
     const startX = WIDTH / 2 - total / 2 + CARD_W / 2;
 
     defs.forEach((def, i) => {
-      const card = this.makeCard(def, startX + i * (CARD_W + GAP), HEIGHT / 2 + 20, i);
+      const isDisabled = disabled[i] === true;
+      const card = this.makeCard(def, startX + i * (CARD_W + GAP), HEIGHT / 2 + 20, i, isDisabled);
       this.cards.push(card);
       this.add(card);
       card.setScale(0.85);
@@ -44,7 +48,7 @@ export class CardPanel extends Phaser.GameObjects.Container {
       this.scene.tweens.add({
         targets: card,
         scale: 1,
-        alpha: 1,
+        alpha: isDisabled ? DISABLED_ALPHA : 1,
         duration: 160,
         delay: i * 50,
         ease: 'Back.Out',
@@ -67,18 +71,20 @@ export class CardPanel extends Phaser.GameObjects.Container {
     this.cards = [];
   }
 
-  private makeCard(def: MachineDef, x: number, y: number, index: number): Phaser.GameObjects.Container {
+  private makeCard(def: MachineDef, x: number, y: number, index: number, disabled: boolean): Phaser.GameObjects.Container {
     const scene = this.scene;
     const c = scene.add.container(x, y);
 
     const bg = scene.add.rectangle(0, 0, CARD_W, CARD_H, 0x1c232b, 1);
     bg.setStrokeStyle(4, def.color, 1);
-    bg.setInteractive({ useHandCursor: true });
-    bg.on('pointerdown', () => {
-      if (this.onPick) this.onPick(index);
-    });
-    bg.on('pointerover', () => c.setScale(1.04));
-    bg.on('pointerout', () => c.setScale(1));
+    if (!disabled) {
+      bg.setInteractive({ useHandCursor: true });
+      bg.on('pointerdown', () => {
+        if (this.onPick) this.onPick(index);
+      });
+      bg.on('pointerover', () => c.setScale(1.04));
+      bg.on('pointerout', () => c.setScale(1));
+    }
 
     const g = scene.add.graphics();
     drawMachineIcon(g, def.id, 0, -78, 84, def.color);

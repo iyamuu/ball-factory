@@ -74,6 +74,7 @@ interface DebugHook {
   remainingSec: () => number;
   offers: () => MachineId[][];
   seed: () => number;
+  canExtend: () => boolean;
 }
 
 export class GameScene extends Phaser.Scene {
@@ -113,7 +114,9 @@ export class GameScene extends Phaser.Scene {
   create(data?: GameStart): void {
     this.sim = new Simulation(RUNTIME.roundDurationSec);
     this.seed = data?.seed ?? RUNTIME.fixedSeed ?? randomSeed();
-    this.offers = generateOffers(this.seed, RUNTIME.roundDurationSec);
+    const extend = BALANCE.machines.extend;
+    const longestRoundSec = RUNTIME.roundDurationSec + extend.maxPerRound * extend.seconds;
+    this.offers = generateOffers(this.seed, longestRoundSec);
     this.nextOffer = 0;
     this.paused = false;
     this.ended = false;
@@ -146,6 +149,7 @@ export class GameScene extends Phaser.Scene {
       remainingSec: () => this.sim.remainingSec,
       offers: () => this.offers.map((o) => o.cards.map((c) => c.id)),
       seed: () => this.seed,
+      canExtend: () => this.sim.canExtend,
     };
     (window as unknown as { __bf: DebugHook }).__bf = hook;
   }
@@ -169,7 +173,7 @@ export class GameScene extends Phaser.Scene {
     let steps = 0;
     while (this.simAccumulator >= step && steps < MAX_STEPS_PER_FRAME) {
       this.simAccumulator -= step;
-      this.runSimStep(step);
+      this.runSimStep();
       steps += 1;
       if (this.paused || this.ended) break;
     }
@@ -184,8 +188,9 @@ export class GameScene extends Phaser.Scene {
 
   // ---------------------------------------------------------------- simulation
 
-  private runSimStep(step: number): void {
-    const res = this.sim.step(step);
+  private runSimStep(): void {
+    const step = BALANCE.round.simStepSec;
+    const res = this.sim.step();
     this.popupGain += res.gained;
     this.popupAcc += step;
     this.peakRate = Math.max(this.peakRate, this.sim.scoreRate);
@@ -208,15 +213,16 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
-    if (this.nextOffer < this.offers.length && this.sim.timeSec >= this.offers[this.nextOffer].atSec) {
-      this.showOffer(this.offers[this.nextOffer]);
-    }
+    // Offers keep coming every interval while the round lasts; EXTEND can make later ones reachable.
+    const next = this.offers[this.nextOffer];
+    if (next && this.sim.timeSec >= next.atSec) this.showOffer(next);
   }
 
   private showOffer(offer: Offer): void {
     // Production, the round timer and boost time all stop while the panel is open.
     this.paused = true;
-    this.panel.show(offer.cards, (i) => this.pickCard(i));
+    const disabled = offer.cards.map((c) => c.id === 'extend' && !this.sim.canExtend);
+    this.panel.show(offer.cards, (i) => this.pickCard(i), disabled);
   }
 
   private pickCard(index: number): void {
@@ -224,6 +230,7 @@ export class GameScene extends Phaser.Scene {
     const offer = this.offers[this.nextOffer];
     const def: MachineDef | undefined = offer?.cards[index];
     if (!def) return;
+    if (def.id === 'extend' && !this.sim.canExtend) return; // greyed-out card
 
     this.nextOffer += 1;
     this.panel.hide();
@@ -239,12 +246,14 @@ export class GameScene extends Phaser.Scene {
     this.peakRate = Math.max(this.peakRate, afterRate);
     // Show what the pick did to the rate, e.g. "12.0 -> 24.0 /s". A machine whose effect is
     // deferred (ACCEL changes nothing until it triggers) shows its description instead.
-    let message = def.desc;
-    if (afterRate !== beforeRate) message = `${beforeRate.toFixed(1)} → ${afterRate.toFixed(1)} /s`;
-    else if (this.sim.remainingSec !== beforeRemaining) {
-      message = `${Math.ceil(beforeRemaining)}s → ${Math.ceil(this.sim.remainingSec)}s`;
+    if (this.sim.remainingSec !== beforeRemaining) {
+      // Time was added: the effect lives at the timer, not in the centre.
+      this.showTimeGain(this.sim.remainingSec - beforeRemaining);
+    } else {
+      const message =
+        afterRate !== beforeRate ? `${beforeRate.toFixed(1)} → ${afterRate.toFixed(1)} /s` : def.desc;
+      spawnPopup(this, WIDTH / 2, 300, message, true);
     }
-    spawnPopup(this, WIDTH / 2, 300, message, true);
     if (afterRate >= beforeRate * 1.5) this.shake(1);
   }
 
@@ -340,6 +349,32 @@ export class GameScene extends Phaser.Scene {
     if (this.pendingGainPopup <= 0) return;
     spawnPopup(this, WIDTH / 2 + 230, 215, `+${this.pendingGainPopup}`, false);
     this.pendingGainPopup = 0;
+  }
+
+  /** "+5" floats up beside the timer while the timer punches and flashes yellow. */
+  private showTimeGain(seconds: number): void {
+    this.refreshTexts();
+    const x = this.timerText.x + this.timerText.width + 18;
+    const t = this.add
+      .text(x, this.timerText.y + 4, `+${Math.round(seconds)}`, {
+        fontFamily: FONT,
+        fontSize: '40px',
+        color: '#fff176',
+        fontStyle: 'bold',
+      })
+      .setOrigin(0, 0)
+      .setDepth(50);
+    this.tweens.add({ targets: t, y: t.y - 40, alpha: 0, duration: 900, ease: 'Cubic.Out', onComplete: () => t.destroy() });
+
+    this.timerText.setColor('#fff176');
+    this.tweens.add({
+      targets: this.timerText,
+      scale: 1.35,
+      duration: 140,
+      yoyo: true,
+      ease: 'Quad.Out',
+      onComplete: () => this.timerText.setColor('#e8eef4'),
+    });
   }
 
   private flashBoost(): void {

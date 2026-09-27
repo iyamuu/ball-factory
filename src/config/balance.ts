@@ -61,8 +61,10 @@ const MACHINES = {
     multiplier: 1.5,
   },
   extend: {
-    /** Seconds added to the round. Offers are not added; the extra time runs after the last offer. */
+    /** Seconds added to the round. Offers keep coming every intervalSec until the round ends. */
     seconds: 5,
+    /** EXTEND picks allowed per round. Offers may still show it afterwards, greyed out. */
+    maxPerRound: 3,
   },
 } as const;
 
@@ -138,7 +140,7 @@ export const BALANCE = {
       id: 'extend',
       label: 'EXTEND',
       figure: `+${MACHINES.extend.seconds}s`,
-      desc: `Round +${MACHINES.extend.seconds} seconds`,
+      desc: `Round +${MACHINES.extend.seconds}s (max ${MACHINES.extend.maxPerRound} per round)`,
       color: 0xfff176,
       onLine: false,
     },

@@ -36,7 +36,8 @@ interface Group {
  *   score += sum(count * value)
  */
 export class Simulation {
-  timeSec = 0;
+  /** Elapsed fixed steps. Time is derived from this so it stays exact at whole seconds. */
+  private steps = 0;
   score = 0;
   ballsOut = 0;
   baseRate: number = BALANCE.production.baseRate;
@@ -53,6 +54,11 @@ export class Simulation {
     this.durationSec = durationSec;
   }
 
+  /** Elapsed simulation time. One multiplication, so offer times and the round end compare exactly. */
+  get timeSec(): number {
+    return this.steps * BALANCE.round.simStepSec;
+  }
+
   /** Time left in the round, including seconds added by EXTEND. */
   get remainingSec(): number {
     return Math.max(0, this.durationSec + this.bonusTimeSec - this.timeSec);
@@ -60,6 +66,11 @@ export class Simulation {
 
   get ended(): boolean {
     return this.remainingSec <= 0;
+  }
+
+  /** True while another EXTEND may be picked this round. */
+  get canExtend(): boolean {
+    return this.extendCount < BALANCE.machines.extend.maxPerRound;
   }
 
   private readonly accel = BALANCE.machines.accelerator;
@@ -86,6 +97,7 @@ export class Simulation {
         this.speedCount += 1;
         return;
       case 'extend':
+        if (!this.canExtend) return;
         this.bonusTimeSec += BALANCE.machines.extend.seconds;
         this.extendCount += 1;
         return;
@@ -94,7 +106,9 @@ export class Simulation {
     }
   }
 
-  step(dt: number): StepResult {
+  /** Advances the model by one fixed step (BALANCE.round.simStepSec). */
+  step(): StepResult {
+    const dt = BALANCE.round.simStepSec;
     const wasActive = this.boostActive;
     const rate = this.sourceRate;
 
@@ -113,7 +127,7 @@ export class Simulation {
     }
     this.score += gained;
     this.ballsOut += count;
-    this.timeSec += dt;
+    this.steps += 1;
 
     return { gained, triggers, boostStarted: !wasActive && this.boostActive };
   }
