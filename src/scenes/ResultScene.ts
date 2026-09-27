@@ -57,7 +57,8 @@ export class ResultScene extends Phaser.Scene {
     this.add
       .text(WIDTH / 2, 545, 'RETRY', { fontFamily: FONT, fontSize: '48px', color: '#101418', fontStyle: 'bold' })
       .setOrigin(0.5);
-    btn.on('pointerdown', () => this.scene.start('Game'));
+    // An explicit empty object: Phaser keeps the previous scene data (e.g. a SAME SEED replay) when data is falsy.
+    btn.on('pointerdown', () => this.scene.start('Game', {}));
 
     const same = this.add
       .text(WIDTH / 2, 640, `SAME SEED ${seed}`, { fontFamily: FONT, fontSize: '22px', color: '#9fb3c8' })

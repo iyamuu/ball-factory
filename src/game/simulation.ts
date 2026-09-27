@@ -43,8 +43,24 @@ export class Simulation {
   boostRemainingSec = 0;
   line: LineMachine[] = [];
   speedCount = 0;
+  extendCount = 0;
   /** Seconds added to the round by EXTEND cards. */
   bonusTimeSec = 0;
+  /** Base round length; EXTEND adds to it. */
+  readonly durationSec: number;
+
+  constructor(durationSec: number = BALANCE.round.durationSec) {
+    this.durationSec = durationSec;
+  }
+
+  /** Time left in the round, including seconds added by EXTEND. */
+  get remainingSec(): number {
+    return Math.max(0, this.durationSec + this.bonusTimeSec - this.timeSec);
+  }
+
+  get ended(): boolean {
+    return this.remainingSec <= 0;
+  }
 
   private readonly accel = BALANCE.machines.accelerator;
 
@@ -71,6 +87,7 @@ export class Simulation {
         return;
       case 'extend':
         this.bonusTimeSec += BALANCE.machines.extend.seconds;
+        this.extendCount += 1;
         return;
       default:
         this.line.push({ id, accum: 0, processed: 1 });

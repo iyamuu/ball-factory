@@ -19,8 +19,13 @@ export const RUNTIME = {
   roundDurationSec: num('round') ?? BALANCE.round.durationSec,
   shakeEnabled: BALANCE.shake.enabled && params.get('shake') !== '0',
   /** Fixed offer seed, or undefined for a new random seed every round. */
-  fixedSeed: num('seed') ?? BALANCE.cards.seed ?? undefined,
+  fixedSeed: normalizeSeed(num('seed') ?? BALANCE.cards.seed ?? undefined),
 };
+
+/** The RNG uses seeds as 32-bit unsigned integers; show the same value the RNG uses. */
+function normalizeSeed(seed: number | undefined): number | undefined {
+  return seed === undefined ? undefined : Math.trunc(seed) >>> 0;
+}
 
 /** A fresh 31-bit seed for one round. */
 export function randomSeed(): number {

@@ -87,7 +87,6 @@ export class GameScene extends Phaser.Scene {
   private fxRng!: Rng;
   private peakRate = 0;
   private seed = 0;
-  private extendCount = 0;
 
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
@@ -112,10 +111,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(data?: GameStart): void {
-    this.sim = new Simulation();
+    this.sim = new Simulation(RUNTIME.roundDurationSec);
     this.seed = data?.seed ?? RUNTIME.fixedSeed ?? randomSeed();
     this.offers = generateOffers(this.seed, RUNTIME.roundDurationSec);
-    this.extendCount = 0;
     this.nextOffer = 0;
     this.paused = false;
     this.ended = false;
@@ -145,7 +143,7 @@ export class GameScene extends Phaser.Scene {
       pick: (i) => this.pickCard(i),
       visibleBalls: () => this.activeBallCount,
       ballXs: () => this.balls.filter((b) => b.active).map((b) => b.shape.x),
-      remainingSec: () => this.remainingSec,
+      remainingSec: () => this.sim.remainingSec,
       offers: () => this.offers.map((o) => o.cards.map((c) => c.id)),
       seed: () => this.seed,
     };
@@ -205,7 +203,7 @@ export class GameScene extends Phaser.Scene {
       this.pendingGainPopup += n;
     }
 
-    if (this.remainingSec <= 0) {
+    if (this.sim.ended) {
       this.endRound();
       return;
     }
@@ -232,10 +230,9 @@ export class GameScene extends Phaser.Scene {
     this.paused = false;
 
     const beforeRate = this.sim.scoreRate;
-    const beforeRemaining = this.remainingSec;
+    const beforeRemaining = this.sim.remainingSec;
     this.sim.addMachine(def.id);
-    if (def.id === 'extend') this.extendCount += 1;
-    this.layoutMachines();
+    if (def.onLine) this.layoutMachines(); // SPEED and EXTEND do not change the line
     this.refreshSource();
 
     const afterRate = this.sim.scoreRate;
@@ -244,7 +241,9 @@ export class GameScene extends Phaser.Scene {
     // deferred (ACCEL changes nothing until it triggers) shows its description instead.
     let message = def.desc;
     if (afterRate !== beforeRate) message = `${beforeRate.toFixed(1)} → ${afterRate.toFixed(1)} /s`;
-    else if (this.remainingSec !== beforeRemaining) message = `${Math.ceil(beforeRemaining)}s → ${Math.ceil(this.remainingSec)}s`;
+    else if (this.sim.remainingSec !== beforeRemaining) {
+      message = `${Math.ceil(beforeRemaining)}s → ${Math.ceil(this.sim.remainingSec)}s`;
+    }
     spawnPopup(this, WIDTH / 2, 300, message, true);
     if (afterRate >= beforeRate * 1.5) this.shake(1);
   }
@@ -261,7 +260,7 @@ export class GameScene extends Phaser.Scene {
       saved,
       line: this.sim.line.map((m) => m.id),
       speedCount: this.sim.speedCount,
-      extendCount: this.extendCount,
+      extendCount: this.sim.extendCount,
       peakRate: this.peakRate,
       seed: this.seed,
     };
@@ -308,13 +307,8 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  /** Time left in the round, including seconds added by EXTEND. */
-  private get remainingSec(): number {
-    return Math.max(0, RUNTIME.roundDurationSec + this.sim.bonusTimeSec - this.sim.timeSec);
-  }
-
   private refreshTexts(): void {
-    this.timerText.setText(String(Math.ceil(this.remainingSec)));
+    this.timerText.setText(String(Math.ceil(this.sim.remainingSec)));
     this.scoreText.setText(Math.floor(this.sim.score).toLocaleString('en-US'));
     this.rateText.setText(`${this.sim.scoreRate.toFixed(1)} /s`);
   }
