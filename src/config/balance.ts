@@ -3,7 +3,7 @@
  * Time values are in seconds unless the name says otherwise.
  */
 
-export type MachineId = 'splitter' | 'accelerator' | 'doubler' | 'speed';
+export type MachineId = 'splitter' | 'accelerator' | 'press' | 'speed';
 
 export interface MachineDef {
   id: MachineId;
@@ -11,11 +11,52 @@ export interface MachineDef {
   label: string;
   /** Number shown on the card below the label (e.g. "x2"). */
   figure: string;
+  /** One-line effect description shown on the card. */
+  desc: string;
   /** Display colour. */
   color: number;
   /** True if the machine is placed on the line. Speed upgrades the source instead. */
   onLine: boolean;
 }
+
+/** Machine effect numbers. Defined first so card text below can be derived from them. */
+const MACHINES = {
+  splitter: {
+    /** Each ball passing through becomes this many balls. */
+    multiplier: 2,
+  },
+  accelerator: {
+    /** Logical balls that must pass through to add one burst of boost time. */
+    ballsPerTrigger: 10,
+    /** Boost time added per trigger. */
+    boostSecPerTrigger: 3,
+    /** Remaining boost time is capped here. */
+    maxBoostSec: 6,
+    /** Production rate multiplier while boost is active. Not stacked across accelerators. */
+    rateMultiplier: 1.5,
+  },
+  press: {
+    /** Value multiplier for processed balls. */
+    multiplier: 3,
+    /** Balls per second that can be processed. Balls above this pass through unchanged. */
+    capacityPerSec: 8,
+    /**
+     * true: capacityPerSec is one budget shared by every press on the line, spent in line order.
+     * false: every press has its own capacityPerSec.
+     *
+     * Chosen by brute force over every pick sequence (3^9) of seeded rounds: with a per-press
+     * budget and x2, PRESS ties with SPLIT while the flow is below the budget and is never
+     * chosen once above it; with a multiplier above 2 and a per-press budget, PRESS alone
+     * dominates. A shared budget with x3 gives optima that contain both SPLIT and PRESS with
+     * the budget binding (see docs/DESIGN.md).
+     */
+    shared: true,
+  },
+  speed: {
+    /** Source base rate multiplier. */
+    multiplier: 1.5,
+  },
+} as const;
 
 export const BALANCE = {
   round: {
@@ -28,7 +69,7 @@ export const BALANCE = {
   production: {
     /** Balls per second produced by the source at the start of a round. */
     baseRate: 2,
-    /** Score value of one ball before any Doubler. */
+    /** Score value of one ball before any Press. */
     baseValue: 1,
   },
 
@@ -43,37 +84,44 @@ export const BALANCE = {
     seed: 7,
   },
 
-  machines: {
-    splitter: {
-      /** Each ball passing through becomes this many balls. */
-      multiplier: 2,
-    },
-    accelerator: {
-      /** Logical balls that must pass through to add one burst of boost time. */
-      ballsPerTrigger: 10,
-      /** Boost time added per trigger. */
-      boostSecPerTrigger: 3,
-      /** Remaining boost time is capped here. */
-      maxBoostSec: 6,
-      /** Production rate multiplier while boost is active. Not stacked across accelerators. */
-      rateMultiplier: 1.5,
-    },
-    doubler: {
-      /** Ball value multiplier. */
-      multiplier: 2,
-    },
-    speed: {
-      /** Source base rate multiplier. */
-      multiplier: 1.5,
-    },
-  },
+  machines: MACHINES,
 
-  /** Card definitions. Order here is the order used by the seeded draw. */
+  /** Card definitions. Order here is the order used by the seeded draw. Text is derived from MACHINES. */
   machineDefs: [
-    { id: 'splitter', label: 'SPLIT', figure: 'x2', color: 0x4fc3f7, onLine: true },
-    { id: 'accelerator', label: 'ACCEL', figure: '10 > 3s', color: 0xffb74d, onLine: true },
-    { id: 'doubler', label: 'VALUE', figure: 'x2', color: 0xba68c8, onLine: true },
-    { id: 'speed', label: 'SPEED', figure: 'x1.5', color: 0x81c784, onLine: false },
+    {
+      id: 'splitter',
+      label: 'SPLIT',
+      figure: `x${MACHINES.splitter.multiplier}`,
+      desc: `Balls x${MACHINES.splitter.multiplier}`,
+      color: 0x4fc3f7,
+      onLine: true,
+    },
+    {
+      id: 'accelerator',
+      label: 'ACCEL',
+      figure: `${MACHINES.accelerator.ballsPerTrigger} > ${MACHINES.accelerator.boostSecPerTrigger}s`,
+      desc: `Every ${MACHINES.accelerator.ballsPerTrigger} balls: +${Math.round((MACHINES.accelerator.rateMultiplier - 1) * 100)}% speed for ${MACHINES.accelerator.boostSecPerTrigger}s`,
+      color: 0xffb74d,
+      onLine: true,
+    },
+    {
+      id: 'press',
+      label: 'PRESS',
+      figure: `x${MACHINES.press.multiplier}`,
+      desc: MACHINES.press.shared
+        ? `Value x${MACHINES.press.multiplier}. All presses share ${MACHINES.press.capacityPerSec} balls/s`
+        : `Value x${MACHINES.press.multiplier}, up to ${MACHINES.press.capacityPerSec} balls/s`,
+      color: 0xba68c8,
+      onLine: true,
+    },
+    {
+      id: 'speed',
+      label: 'SPEED',
+      figure: `x${MACHINES.speed.multiplier}`,
+      desc: `Source speed x${MACHINES.speed.multiplier}`,
+      color: 0x81c784,
+      onLine: false,
+    },
   ] as MachineDef[],
 
   visuals: {

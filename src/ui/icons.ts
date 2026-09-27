@@ -33,7 +33,7 @@ export function drawMachineIcon(
       g.fillTriangle(x - r, y - r, x - r, y + r, x + r, y);
       break;
     }
-    case 'doubler': {
+    case 'press': {
       // Diamond.
       fillPolygon(
         g,
