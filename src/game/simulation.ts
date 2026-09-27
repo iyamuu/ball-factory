@@ -56,7 +56,7 @@ export class Simulation {
 
   /** Elapsed simulation time. One multiplication, so offer times and the round end compare exactly. */
   get timeSec(): number {
-    return this.steps * BALANCE.round.simStepSec;
+    return this.steps * this.stepSec;
   }
 
   /** Time left in the round, including seconds added by EXTEND. */
@@ -68,9 +68,17 @@ export class Simulation {
     return this.remainingSec <= 0;
   }
 
+  /** Length of one simulation step. */
+  readonly stepSec: number = BALANCE.round.simStepSec;
+
   /** True while another EXTEND may be picked this round. */
   get canExtend(): boolean {
     return this.extendCount < BALANCE.machines.extend.maxPerRound;
+  }
+
+  /** Whether a card can be picked in the current state (per-round caps live here). */
+  canPick(id: MachineId): boolean {
+    return id !== 'extend' || this.canExtend;
   }
 
   private readonly accel = BALANCE.machines.accelerator;
@@ -90,25 +98,27 @@ export class Simulation {
     return groups.reduce((s, g) => s + g.count * g.value, 0);
   }
 
-  addMachine(id: MachineId): void {
+  /** Applies a picked card. Returns false (and changes nothing) when canPick(id) is false. */
+  addMachine(id: MachineId): boolean {
+    if (!this.canPick(id)) return false;
     switch (id) {
       case 'speed':
         this.baseRate *= BALANCE.machines.speed.multiplier;
         this.speedCount += 1;
-        return;
+        break;
       case 'extend':
-        if (!this.canExtend) return;
         this.bonusTimeSec += BALANCE.machines.extend.seconds;
         this.extendCount += 1;
-        return;
+        break;
       default:
         this.line.push({ id, accum: 0, processed: 1 });
     }
+    return true;
   }
 
   /** Advances the model by one fixed step (BALANCE.round.simStepSec). */
   step(): StepResult {
-    const dt = BALANCE.round.simStepSec;
+    const dt = this.stepSec;
     const wasActive = this.boostActive;
     const rate = this.sourceRate;
 
