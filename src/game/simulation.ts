@@ -43,6 +43,8 @@ export class Simulation {
   boostRemainingSec = 0;
   line: LineMachine[] = [];
   speedCount = 0;
+  /** Seconds added to the round by EXTEND cards. */
+  bonusTimeSec = 0;
 
   private readonly accel = BALANCE.machines.accelerator;
 
@@ -62,12 +64,17 @@ export class Simulation {
   }
 
   addMachine(id: MachineId): void {
-    if (id === 'speed') {
-      this.baseRate *= BALANCE.machines.speed.multiplier;
-      this.speedCount += 1;
-      return;
+    switch (id) {
+      case 'speed':
+        this.baseRate *= BALANCE.machines.speed.multiplier;
+        this.speedCount += 1;
+        return;
+      case 'extend':
+        this.bonusTimeSec += BALANCE.machines.extend.seconds;
+        return;
+      default:
+        this.line.push({ id, accum: 0, processed: 1 });
     }
-    this.line.push({ id, accum: 0, processed: 1 });
   }
 
   step(dt: number): StepResult {
@@ -137,6 +144,7 @@ export class Simulation {
           break;
         }
         case 'speed':
+        case 'extend':
           break;
       }
     }
