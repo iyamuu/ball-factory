@@ -41,6 +41,7 @@ interface DebugHook {
   offersShown: () => number;
   pick: (index: number) => void;
   visibleBalls: () => number;
+  ballXs: () => number[];
   remainingSec: () => number;
   offers: () => MachineId[][];
 }
@@ -102,7 +103,8 @@ export class GameScene extends Phaser.Scene {
       isPaused: () => this.paused,
       offersShown: () => this.nextOffer,
       pick: (i) => this.pickCard(i),
-      visibleBalls: () => this.balls.filter((b) => b.active).length,
+      visibleBalls: () => this.activeBallCount,
+      ballXs: () => this.balls.filter((b) => b.active).map((b) => b.shape.x),
       remainingSec: () => Math.max(0, RUNTIME.roundDurationSec - this.sim.timeSec),
       offers: () => this.offers.map((o) => o.cards.map((c) => c.id)),
     };
@@ -304,14 +306,22 @@ export class GameScene extends Phaser.Scene {
     return c;
   }
 
-  // Visual balls are cosmetic: capped pool, capped spawn rate. Production is computed in Simulation.
+  // Visual balls are cosmetic. Production is computed in Simulation; the shapes only show its
+  // structure: a capped stream from the source, and more balls after each splitter.
   private updateBalls(dt: number): void {
     const v = BALANCE.visuals;
     this.spawnAcc += Math.min(this.sim.sourceRate, v.maxSpawnPerSec) * dt;
     while (this.spawnAcc >= 1) {
       this.spawnAcc -= 1;
-      this.spawnBall(SOURCE_X + 36, LINE_Y + this.fxRng.range(-10, 10), 0, 1);
+      this.spawnBall(SOURCE_X + 36, LINE_Y + this.fxRng.range(-10, 10), 0, true);
     }
+
+    // Probability that a splitter copies a ball. 1 while 2^splitters <= maxVisualMultiplier;
+    // lower when there are more splitters, so that one source ball never becomes more than
+    // maxVisualMultiplier shapes while every splitter still adds some.
+    const splitters = this.sim.line.filter((m) => m.id === 'splitter').length;
+    const factor = splitters === 0 ? 1 : Math.min(2, Math.pow(v.maxVisualMultiplier, 1 / splitters));
+    const splitChance = factor - 1;
 
     const dx = v.ballSpeedPx * dt;
     for (const b of this.balls) {
@@ -321,10 +331,12 @@ export class GameScene extends Phaser.Scene {
       while (b.nextMachine < this.machineXs.length && b.shape.x >= this.machineXs[b.nextMachine]) {
         const id = this.sim.line[b.nextMachine].id;
         b.nextMachine += 1;
-        if (id === 'splitter') {
-          const twin = this.spawnBall(b.shape.x, b.shape.y - 14, b.nextMachine, b.shape.scale);
-          if (twin) b.shape.y += 14;
+        if (id === 'splitter' && this.fxRng.next() < splitChance) {
+          const y = LINE_Y + this.fxRng.range(-v.laneHalfWidthPx, v.laneHalfWidthPx);
+          const twin = this.spawnBall(b.shape.x, y, b.nextMachine, false);
+          if (twin) twin.shape.setScale(b.shape.scale);
         } else if (id === 'doubler') {
+          // Value is shown by size, count by number of shapes.
           b.shape.setScale(Math.min(2.2, b.shape.scale * 1.3));
         }
       }
@@ -336,12 +348,21 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
-  private spawnBall(x: number, y: number, nextMachine: number, scale: number): VisualBall | null {
+  /** Takes a shape from the pool. Copies made by splitters leave `sourceReserve` shapes for the source. */
+  private spawnBall(x: number, y: number, nextMachine: number, fromSource: boolean): VisualBall | null {
+    const v = BALANCE.visuals;
+    if (!fromSource && this.activeBallCount >= v.maxBalls - v.sourceReserve) return null;
     const b = this.balls.find((ball) => !ball.active);
     if (!b) return null;
     b.active = true;
     b.nextMachine = nextMachine;
-    b.shape.setPosition(x, y).setScale(scale).setVisible(true);
+    b.shape.setPosition(x, y).setScale(1).setVisible(true);
     return b;
+  }
+
+  private get activeBallCount(): number {
+    let n = 0;
+    for (const b of this.balls) if (b.active) n++;
+    return n;
   }
 }

@@ -77,10 +77,24 @@ export const BALANCE = {
   ] as MachineDef[],
 
   visuals: {
-    /** Maximum number of ball shapes drawn at once. Production is not limited by this. */
-    maxBalls: 80,
+    /**
+     * Safety limit on ball shapes drawn at once. Production is not limited by this, and with the
+     * values below the limit is normally not reached: at most maxSpawnPerSec * maxVisualMultiplier
+     * balls enter the line per second, and a ball takes about 4 s to cross it.
+     */
+    maxBalls: 300,
+    /** Shapes kept free for the source so the start of the line never runs dry while splitters copy balls. */
+    sourceReserve: 40,
     /** Maximum ball shapes spawned per second at the source. */
-    maxSpawnPerSec: 12,
+    maxSpawnPerSec: 8,
+    /**
+     * Maximum number of shapes one source ball can become through visual splitting. When the line
+     * has more splitters than log2 of this, each splitter copies a ball with a probability chosen
+     * so that the product over the line still equals this value. Every splitter still adds balls.
+     */
+    maxVisualMultiplier: 8,
+    /** Half height of the band, in pixels, that balls are spread over after a split. */
+    laneHalfWidthPx: 40,
     /** Pixels per second a ball shape travels along the line. */
     ballSpeedPx: 260,
     /** Interval between "+N" popups. */
