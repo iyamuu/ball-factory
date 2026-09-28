@@ -197,6 +197,17 @@ export const BALANCE = {
     popupIntervalSec: 0.5,
   },
 
+  playback: {
+    /**
+     * Speeds offered by the speed button: simulation seconds per wall-clock second. Every number in
+     * this file is in simulation time, so the speed changes only how long a round takes to watch,
+     * never the score. Offers still pause the round, so the time to decide is not shortened.
+     */
+    speeds: [1, 1.25, 1.5, 2],
+    /** Speed for a player who has not picked one (and when storage is unavailable). */
+    defaultSpeed: 1,
+  },
+
   shake: {
     /** Set to false to disable all camera shake. */
     enabled: true,
@@ -206,5 +217,7 @@ export const BALANCE = {
 
   storage: {
     key: 'ball-factory.v1',
+    /** Last speed picked with the speed button. Kept apart from the best score. */
+    speedKey: 'ball-factory.speed.v1',
   },
 } as const;

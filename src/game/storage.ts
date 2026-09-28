@@ -29,3 +29,21 @@ export function saveBest(best: number): boolean {
     return false;
   }
 }
+
+/** Last speed picked with the speed button, if it is still one of the offered speeds. */
+export function loadSpeed(): number | undefined {
+  try {
+    const n = Number(localStorage.getItem(BALANCE.storage.speedKey));
+    return (BALANCE.playback.speeds as readonly number[]).includes(n) ? n : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveSpeed(speed: number): void {
+  try {
+    localStorage.setItem(BALANCE.storage.speedKey, String(speed));
+  } catch {
+    // storage unavailable: the speed lasts until the page is reloaded
+  }
+}
