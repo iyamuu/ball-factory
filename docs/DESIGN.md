@@ -198,6 +198,6 @@ EXTEND は全シードの最適解に入るが、EXTEND を常に優先する戦
 
 ## テスト・調整用のフック
 
-- URL パラメータ: `?round=秒数`（ラウンド短縮）、`?shake=0`（揺れ無効）、`?seed=数値`（提示シードを固定）、`?telemetry=0`（送信無効）または `?telemetry=URL`（送信先を差し替え）
+- URL パラメータ: `?round=秒数`（ラウンド短縮）、`?shake=0`（揺れ無効）、`?seed=数値`（提示シードを固定）、`?telemetry=0`（送信無効）または `?telemetry=URL`（送信先を差し替え。localhost 宛のみ）
 - ラウンド終了時の記録送信: `docs/TELEMETRY.md`。結果画面の COPY LOG で直近20ラウンドの JSON をコピーできる
 - `window.__bf`: シミュレーション状態、提示内容、選択関数などを公開。自動テストと観察用。

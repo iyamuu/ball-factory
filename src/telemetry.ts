@@ -37,14 +37,23 @@ export interface RoundRecord {
   screen: { w: number; h: number; dpr: number; touch: boolean };
 }
 
-/** Endpoint override for testing: ?telemetry=0 disables sending, ?telemetry=<url> replaces the URL. */
+/** Hosts a ?telemetry=<url> override may point at: the tester's own machine, never a third party. */
+const OVERRIDE_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/**
+ * Endpoint override for testing: ?telemetry=0 disables sending, ?telemetry=<url> replaces the URL.
+ * The replacement must be a local address, so a crafted public link cannot redirect records elsewhere.
+ */
 function endpoint(): string {
   try {
     const p = new URLSearchParams(window.location.search).get('telemetry');
     if (p === '0') return '';
-    if (p && /^https?:\/\//.test(p)) return p;
+    if (p) {
+      const u = new URL(p);
+      if ((u.protocol === 'http:' || u.protocol === 'https:') && OVERRIDE_HOSTS.has(u.hostname)) return u.href;
+    }
   } catch {
-    // no URL access: fall through to the configured endpoint
+    // no URL access or an unparsable override: fall through to the configured endpoint
   }
   return TELEMETRY.endpoint;
 }
