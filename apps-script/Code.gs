@@ -19,7 +19,7 @@ var MAX_BODY_BYTES = 20000;
 var HEADER = [
   'received', 'time', 'player', 'build', 'seed', 'durationSec', 'roundLengthSec', 'score',
   'peakRate', 'speedCount', 'extendCount', 'line', 'offers', 'picks', 'decisionSec',
-  'screen', 'raw',
+  'screen', 'raw', 'abandoned', 'playedSec',
 ];
 var LETTER = { splitter: 'S', accelerator: 'A', press: 'P', speed: 'V', extend: 'E' };
 
@@ -58,6 +58,10 @@ function getSheet() {
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(HEADER);
     sheet.setFrozenRows(1);
+  } else if (sheet.getLastColumn() < HEADER.length) {
+    // The record grew (new columns are only ever appended): name the new columns on an existing sheet.
+    var from = sheet.getLastColumn();
+    sheet.getRange(1, from + 1, 1, HEADER.length - from).setValues([HEADER.slice(from)]);
   }
   return sheet;
 }
@@ -91,7 +95,7 @@ function toRow(r, body) {
     new Date(), text(r.time, 40), text(r.player, 32), text(r.build, 64), num(r.seed), num(r.durationSec),
     num(r.roundLengthSec), num(r.score), num(r.peakRate), num(r.speedCount), num(r.extendCount),
     letters(r.line), text(offers, 400), text(picks, 40), text(decision, 200), text(screen, 60),
-    text(body, MAX_BODY_BYTES),
+    text(body, MAX_BODY_BYTES), r.abandoned ? 1 : 0, num(r.playedSec),
   ];
 }
 

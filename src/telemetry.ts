@@ -28,6 +28,10 @@ export interface RoundRecord {
   durationSec: number;
   /** Actual round length including EXTEND. */
   roundLengthSec: number;
+  /** True if the player restarted before the round ended; the record then covers the part played. */
+  abandoned: boolean;
+  /** Sim-time played (equals roundLengthSec for a finished round). */
+  playedSec: number;
   score: number;
   peakRate: number;
   line: MachineId[];

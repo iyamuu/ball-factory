@@ -9,7 +9,7 @@ import { RUNTIME, randomSeed } from '../runtime';
 import { CardPanel } from '../ui/CardPanel';
 import { drawMachineIcon, FONT } from '../ui/icons';
 import { spawnPopup } from '../ui/Popup';
-import { playerId, recordRound, screenInfo, type OfferRecord } from '../telemetry';
+import { playerId, recordRound, screenInfo, type OfferRecord, type RoundRecord } from '../telemetry';
 import { TELEMETRY } from '../config/telemetry';
 
 const LINE_Y = 440;
@@ -75,7 +75,11 @@ interface DebugHook {
   remainingSec: () => number;
   offers: () => MachineId[][];
   seed: () => number;
+  retry: () => void;
 }
+
+/** Offset of the restart button from the top-right corner, clear of the timer and score. */
+const RETRY_INSET = 56;
 
 export class GameScene extends Phaser.Scene {
   private sim!: Simulation;
@@ -139,6 +143,7 @@ export class GameScene extends Phaser.Scene {
     this.buildStaticUi();
     this.buildBallPool();
     this.panel = new CardPanel(this);
+    this.buildRetryButton();
     this.layoutMachines();
     this.refreshTexts();
     this.refreshSource();
@@ -153,6 +158,7 @@ export class GameScene extends Phaser.Scene {
       remainingSec: () => this.sim.remainingSec,
       offers: () => this.offers.map((o) => o.cards.map((c) => c.id)),
       seed: () => this.seed,
+      retry: () => this.retry(),
     };
     (window as unknown as { __bf: DebugHook }).__bf = hook;
   }
@@ -285,23 +291,38 @@ export class GameScene extends Phaser.Scene {
       roundLengthSec: this.sim.durationSec + this.sim.bonusTimeSec,
     };
     // Fire-and-forget: the record is stored locally and posted when an endpoint is configured.
-    recordRound({
+    recordRound(this.roundRecord(false));
+    this.scene.start('Result', result);
+  }
+
+  /** One tap restarts with a new seed at any time, also while an offer is open. The part played is logged. */
+  private retry(): void {
+    if (this.ended) return;
+    this.ended = true;
+    this.panel.hide();
+    recordRound(this.roundRecord(true));
+    this.scene.restart();
+  }
+
+  private roundRecord(abandoned: boolean): RoundRecord {
+    return {
       v: TELEMETRY.version,
       build: TELEMETRY.build,
       player: playerId(),
       time: new Date().toISOString(),
       seed: this.seed,
       durationSec: this.sim.durationSec,
-      roundLengthSec: result.roundLengthSec,
-      score,
+      roundLengthSec: this.sim.durationSec + this.sim.bonusTimeSec,
+      abandoned,
+      playedSec: Math.round(this.sim.timeSec * 100) / 100,
+      score: Math.floor(this.sim.score),
       peakRate: Math.round(this.peakRate * 10) / 10,
-      line: result.line,
-      speedCount: result.speedCount,
-      extendCount: result.extendCount,
+      line: this.sim.line.map((m) => m.id),
+      speedCount: this.sim.speedCount,
+      extendCount: this.sim.extendCount,
       offers: this.offerLog,
       screen: screenInfo(),
-    });
-    this.scene.start('Result', result);
+    };
   }
 
   // ---------------------------------------------------------------- visuals
@@ -335,6 +356,25 @@ export class GameScene extends Phaser.Scene {
 
     // Bin
     this.add.rectangle(BIN_X, LINE_Y, 60, 90, 0x2b3642, 1).setStrokeStyle(4, 0x9fb3c8, 1);
+  }
+
+  /** Circular arrow in the top-right corner, above the card panel so it works during an offer. */
+  private buildRetryButton(): void {
+    // WIDTH comes from main.ts, which imports this scene: read it here, not at module load.
+    const c = this.add.container(WIDTH - RETRY_INSET, RETRY_INSET).setDepth(200);
+    const bg = this.add.circle(0, 0, 26, 0x1c232b, 1).setStrokeStyle(3, 0x9fb3c8, 1);
+    const g = this.add.graphics();
+    g.lineStyle(4, 0xe8eef4, 1);
+    g.beginPath();
+    g.arc(0, 0, 12, Phaser.Math.DegToRad(-60), Phaser.Math.DegToRad(230), false);
+    g.strokePath();
+    // Arrow head at the start of the arc (top right).
+    g.fillStyle(0xe8eef4, 1);
+    g.fillTriangle(4, -16, 14, -8, 3, -3);
+    // Larger hit area than the drawing so a thumb finds it.
+    const hit = this.add.zone(0, 0, 72, 72).setInteractive({ useHandCursor: true });
+    hit.on('pointerdown', () => this.retry());
+    c.add([bg, g, hit]);
   }
 
   private buildBallPool(): void {

@@ -16,6 +16,7 @@
 | `offers[]` | 提示ごとの `cards`（3枚）、`pick`（選んだカード）、`decisionSec`（表示から選択までの秒数）、`atSec`（提示時刻） |
 | `score`, `peakRate`, `line`, `speedCount`, `extendCount` | 結果 |
 | `durationSec`, `roundLengthSec` | 設定の長さと、EXTEND 込みの実際の長さ |
+| `abandoned`, `playedSec` | 途中でリトライしたか（true なら記録はそこまでの分）と、遊んだ秒数 |
 | `build` | デプロイしたコミットの SHA |
 | `screen` | 画面幅・高さ・DPR・タッチの有無 |
 | `time` | 終了時刻（ISO） |
