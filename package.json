@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "balance": "node tools/balance/run.cjs"
   },
   "dependencies": {
     "phaser": "^4.2.1"

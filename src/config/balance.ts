@@ -28,16 +28,17 @@ const MACHINES = {
   accelerator: {
     /** Logical balls that must pass through to add one burst of boost time. */
     ballsPerTrigger: 10,
-    /** Boost time added per trigger. */
-    boostSecPerTrigger: 3,
+    /** Boost time added per trigger. 4 s: with 3 s the optimum lost EXTEND on one more seed (docs/DESIGN.md). */
+    boostSecPerTrigger: 4,
     /** Remaining boost time is capped here. */
     maxBoostSec: 6,
     /**
      * Production rate multiplier while boost is active. Not stacked across accelerators.
-     * Chosen by brute force (docs/DESIGN.md): with the press budget scaled by the boost, 2.5 puts
-     * ACCEL in every optimal pick sequence on the test seeds where 2.0 leaves it out of one.
+     * Chosen by brute force (docs/DESIGN.md): with a periodic boost (countWhileBoosted false), 2.5
+     * let a one-line strategy reach 56% of the optimum; 3.0 keeps it at 50% with every card in the
+     * optimum of at least 16 of 20 seeds.
      */
-    rateMultiplier: 2.5,
+    rateMultiplier: 3.0,
     /**
      * true: while boost is active the shared press budget is multiplied by rateMultiplier too,
      * so the boost speeds up the whole factory instead of only pushing more balls past the
@@ -45,6 +46,15 @@ const MACHINES = {
      * with it in 6 of 6 (docs/DESIGN.md).
      */
     scalesPressBudget: true,
+    /**
+     * false: only balls passing while the boost is off count toward the next trigger, so the boost is
+     * periodic (at 2 balls/s: 5 s off, 4 s on) and stronger the more balls reach the accelerator
+     * unboosted (SPLIT in front of it).
+     * true: balls passing during the boost count too. With the numbers above that kept the boost on
+     * for the rest of the round once it started (the boosted flow delivered 10 balls before the
+     * boost ran out), which contradicted the card text (docs/DESIGN.md).
+     */
+    countWhileBoosted: false,
   },
   press: {
     /** Value multiplier for processed balls. */
@@ -126,9 +136,9 @@ export const BALANCE = {
       id: 'accelerator',
       label: 'ACCEL',
       figure: `${MACHINES.accelerator.ballsPerTrigger} > ${MACHINES.accelerator.boostSecPerTrigger}s`,
-      desc: MACHINES.accelerator.scalesPressBudget
-        ? `Every ${MACHINES.accelerator.ballsPerTrigger} balls: source and presses x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`
-        : `Every ${MACHINES.accelerator.ballsPerTrigger} balls: speed x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`,
+      desc: `Every ${MACHINES.accelerator.ballsPerTrigger}${MACHINES.accelerator.countWhileBoosted ? '' : ' unboosted'} balls: ${
+        MACHINES.accelerator.scalesPressBudget ? 'source and presses' : 'speed'
+      } x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`,
       color: 0xffb74d,
       onLine: true,
     },

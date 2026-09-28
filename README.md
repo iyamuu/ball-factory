@@ -19,6 +19,7 @@ Other scripts:
 ```sh
 npm run build     # type-check + production build into dist/
 npm run preview   # serve the production build locally
+npm run balance   # brute-force balance check of the configured numbers (tools/balance)
 ```
 
 ## Deployment

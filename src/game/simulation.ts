@@ -32,8 +32,8 @@ interface Group {
  *   rate  = baseRate * boost
  *   batch = rate * dt balls at baseValue
  *   the batch passes through the line in order: Splitter multiplies count, Accelerator accumulates
- *   count and adds boost time per trigger, Press multiplies the value of up to the press budget and
- *   lets the rest through unchanged
+ *   count (only while the boost is off, unless countWhileBoosted) and adds boost time per trigger,
+ *   Press multiplies the value of up to the press budget and lets the rest through unchanged
  *   press budget = capacityPerSec * dt, scaled by SPEED picks and by the boost when configured so
  *   score += sum(count * value)
  */
@@ -117,6 +117,7 @@ export class Simulation {
       1,
       this.pressBudgetMultiplier,
       false,
+      this.boostActive,
     );
     return groups.reduce((s, g) => s + g.count * g.value, 0);
   }
@@ -155,6 +156,7 @@ export class Simulation {
       dt,
       budgetMultiplier,
       true,
+      wasActive,
       counter,
     );
     const triggers = counter.triggers;
@@ -173,15 +175,17 @@ export class Simulation {
   }
 
   /**
-   * Passes a batch through the line. `budgetMultiplier` scales the press capacity for this batch.
-   * With `mutate` true, accelerators accumulate and add boost time (counted into `counter`) and
-   * presses record their processed share; with false, nothing is changed.
+   * Passes a batch through the line. `budgetMultiplier` scales the press capacity for this batch and
+   * `boosted` says whether the boost was active when the batch left the source. With `mutate` true,
+   * accelerators accumulate and add boost time (counted into `counter`) and presses record their
+   * processed share; with false, nothing is changed.
    */
   private runLine(
     groups: Group[],
     dt: number,
     budgetMultiplier: number,
     mutate: boolean,
+    boosted: boolean,
     counter = { triggers: 0 },
   ): Group[] {
     const press = BALANCE.machines.press;
@@ -195,6 +199,9 @@ export class Simulation {
           break;
         case 'accelerator': {
           if (!mutate) break;
+          // Balls that passed while the boost was on do not count unless configured to, so the
+          // boost is periodic instead of feeding itself.
+          if (boosted && !this.accel.countWhileBoosted) break;
           m.accum += groups.reduce((s, g) => s + g.count, 0);
           while (m.accum >= this.accel.ballsPerTrigger) {
             m.accum -= this.accel.ballsPerTrigger;
