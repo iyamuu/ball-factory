@@ -84,6 +84,11 @@ interface DebugHook {
 const RETRY_INSET = 56;
 /** Horizontal distance from the restart button to the speed button on its left. */
 const SPEED_BUTTON_GAP = 116;
+/**
+ * Speed picked with the button on this page. It wins over ?speed= and the saved speed, so a retry
+ * keeps the player's pick even when the URL has ?speed= or storage is unavailable.
+ */
+let pickedSpeed: number | undefined;
 
 export class GameScene extends Phaser.Scene {
   private sim!: Simulation;
@@ -144,7 +149,7 @@ export class GameScene extends Phaser.Scene {
     this.pendingGainPopup = 0;
     this.peakRate = 0;
     this.offerLog = [];
-    this.speed = RUNTIME.speed ?? loadSpeed() ?? BALANCE.playback.defaultSpeed;
+    this.speed = pickedSpeed ?? RUNTIME.speed ?? loadSpeed() ?? BALANCE.playback.defaultSpeed;
     this.speedSec = {};
     this.fxRng = new Rng((Date.now() & 0xffffffff) >>> 0);
     this.machineNodes = [];
@@ -417,6 +422,7 @@ export class GameScene extends Phaser.Scene {
   private setSpeed(speed: number): void {
     if (!(BALANCE.playback.speeds as readonly number[]).includes(speed)) return;
     this.speed = speed;
+    pickedSpeed = speed;
     saveSpeed(speed);
     this.refreshSpeedButton();
   }
