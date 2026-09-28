@@ -19,7 +19,7 @@ var MAX_BODY_BYTES = 20000;
 var HEADER = [
   'received', 'time', 'player', 'build', 'seed', 'durationSec', 'roundLengthSec', 'score',
   'peakRate', 'speedCount', 'extendCount', 'line', 'offers', 'picks', 'decisionSec',
-  'screen', 'raw', 'abandoned', 'playedSec',
+  'screen', 'raw', 'abandoned', 'playedSec', 'speed', 'speedSec',
 ];
 var LETTER = { splitter: 'S', accelerator: 'A', press: 'P', speed: 'V', extend: 'E' };
 
@@ -91,11 +91,14 @@ function toRow(r, body) {
   var decision = r.offers.map(function (o) { var d = num(o && o.decisionSec); return d === '' ? '?' : d.toFixed(1); }).join(' ');
   var s = r.screen || {};
   var screen = [num(s.w), num(s.h), 'x' + num(s.dpr), s.touch ? 'touch' : 'mouse'].join(' ');
+  // Sim-seconds per playback speed, e.g. "1:12.5 1.5:57.5". Older records have none.
+  var speedSec = r.speedSec && typeof r.speedSec === 'object' ? r.speedSec : {};
+  var speeds = Object.keys(speedSec).map(function (k) { return num(k) + ':' + num(speedSec[k]); }).join(' ');
   return [
     new Date(), text(r.time, 40), text(r.player, 32), text(r.build, 64), num(r.seed), num(r.durationSec),
     num(r.roundLengthSec), num(r.score), num(r.peakRate), num(r.speedCount), num(r.extendCount),
     letters(r.line), text(offers, 400), text(picks, 40), text(decision, 200), text(screen, 60),
-    text(body, MAX_BODY_BYTES), r.abandoned ? 1 : 0, num(r.playedSec),
+    text(body, MAX_BODY_BYTES), r.abandoned ? 1 : 0, num(r.playedSec), num(r.speed), text(speeds, 80),
   ];
 }
 

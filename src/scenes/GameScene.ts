@@ -3,7 +3,7 @@ import { BALANCE, type MachineDef, type MachineId } from '../config/balance';
 import { generateOffers, type Offer } from '../game/cards';
 import { Rng } from '../game/rng';
 import { Simulation } from '../game/simulation';
-import { loadBest, saveBest } from '../game/storage';
+import { loadBest, loadSpeed, saveBest, saveSpeed } from '../game/storage';
 import { WIDTH } from '../main';
 import { RUNTIME, randomSeed } from '../runtime';
 import { CardPanel } from '../ui/CardPanel';
@@ -76,10 +76,14 @@ interface DebugHook {
   offers: () => MachineId[][];
   seed: () => number;
   retry: () => void;
+  speed: () => number;
+  setSpeed: (speed: number) => void;
 }
 
 /** Offset of the restart button from the top-right corner, clear of the timer and score. */
 const RETRY_INSET = 56;
+/** Horizontal distance from the restart button to the speed button on its left. */
+const SPEED_BUTTON_GAP = 116;
 
 export class GameScene extends Phaser.Scene {
   private sim!: Simulation;
@@ -95,6 +99,11 @@ export class GameScene extends Phaser.Scene {
   private offerLog: OfferRecord[] = [];
   /** Wall-clock time (performance.now) at which the open offer appeared. */
   private offerShownAt = 0;
+  /** Playback speed: sim seconds per wall-clock second. Changes nothing but how fast the round runs. */
+  private speed: number = BALANCE.playback.defaultSpeed;
+  /** Sim-time played at each speed, for telemetry. */
+  private speedSec: Record<string, number> = {};
+  private speedText!: Phaser.GameObjects.Text;
 
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
@@ -135,6 +144,8 @@ export class GameScene extends Phaser.Scene {
     this.pendingGainPopup = 0;
     this.peakRate = 0;
     this.offerLog = [];
+    this.speed = RUNTIME.speed ?? loadSpeed() ?? BALANCE.playback.defaultSpeed;
+    this.speedSec = {};
     this.fxRng = new Rng((Date.now() & 0xffffffff) >>> 0);
     this.machineNodes = [];
     this.machineXs = [];
@@ -144,6 +155,7 @@ export class GameScene extends Phaser.Scene {
     this.buildBallPool();
     this.panel = new CardPanel(this);
     this.buildRetryButton();
+    this.buildSpeedButton();
     this.layoutMachines();
     this.refreshTexts();
     this.refreshSource();
@@ -159,6 +171,8 @@ export class GameScene extends Phaser.Scene {
       offers: () => this.offers.map((o) => o.cards.map((c) => c.id)),
       seed: () => this.seed,
       retry: () => this.retry(),
+      speed: () => this.speed,
+      setSpeed: (speed) => this.setSpeed(speed),
     };
     (window as unknown as { __bf: DebugHook }).__bf = hook;
   }
@@ -175,9 +189,10 @@ export class GameScene extends Phaser.Scene {
     // Fixed-step simulation, independent of frame rate. The full elapsed time is kept so a slow
     // device does not stretch the round; only the catch-up work per frame is bounded, and any
     // remainder is carried over to the next frame. A single frame longer than MAX_FRAME_SEC is
-    // treated as a stall (debugger, OS sleep) rather than play time.
+    // treated as a stall (debugger, OS sleep) rather than play time. The playback speed scales the
+    // sim time per frame; the numbers in BALANCE are all in sim time, so the score does not change.
     const dt = Math.min(deltaMs / 1000, MAX_FRAME_SEC);
-    this.simAccumulator += dt;
+    this.simAccumulator += dt * this.speed;
     const step = this.sim.stepSec;
     let steps = 0;
     while (this.simAccumulator >= step && steps < MAX_STEPS_PER_FRAME) {
@@ -187,8 +202,9 @@ export class GameScene extends Phaser.Scene {
       if (this.paused || this.ended) break;
     }
 
-    // Visuals are cosmetic: clamp so balls do not teleport after a long frame.
-    this.updateBalls(Math.min(dt, 0.1));
+    // Visuals are cosmetic: clamp so balls do not teleport after a long frame. They follow sim time,
+    // so balls move and spawn faster at a higher speed.
+    this.updateBalls(Math.min(dt, 0.1) * this.speed);
     this.refreshTexts();
     this.refreshSource();
     this.refreshMachineStatus();
@@ -200,7 +216,10 @@ export class GameScene extends Phaser.Scene {
   private runSimStep(): void {
     const res = this.sim.step();
     this.popupGain += res.gained;
-    this.popupAcc += this.sim.stepSec;
+    // Popups are paced in wall-clock time so their fixed lifetime still keeps them from stacking.
+    this.popupAcc += this.sim.stepSec / this.speed;
+    const key = String(this.speed);
+    this.speedSec[key] = (this.speedSec[key] ?? 0) + this.sim.stepSec;
     this.peakRate = Math.max(this.peakRate, this.sim.scoreRate);
 
     if (res.boostStarted) {
@@ -322,6 +341,8 @@ export class GameScene extends Phaser.Scene {
       extendCount: this.sim.extendCount,
       offers: this.offerLog,
       screen: screenInfo(),
+      speed: this.speed,
+      speedSec: Object.fromEntries(Object.entries(this.speedSec).map(([k, v]) => [k, Math.round(v * 100) / 100])),
     };
   }
 
@@ -375,6 +396,35 @@ export class GameScene extends Phaser.Scene {
     const hit = this.add.zone(0, 0, 72, 72).setInteractive({ useHandCursor: true });
     hit.on('pointerdown', () => this.retry());
     c.add([bg, g, hit]);
+  }
+
+  /** "1x" left of the restart button; each tap moves to the next offered speed. Usable during an offer. */
+  private buildSpeedButton(): void {
+    const c = this.add.container(WIDTH - RETRY_INSET - SPEED_BUTTON_GAP, RETRY_INSET).setDepth(200);
+    const bg = this.add.rectangle(0, 0, 104, 52, 0x1c232b, 1).setStrokeStyle(3, 0x9fb3c8, 1);
+    this.speedText = this.add
+      .text(0, 0, '', { fontFamily: FONT, fontSize: '26px', color: '#e8eef4', fontStyle: 'bold' })
+      .setOrigin(0.5);
+    const hit = this.add.zone(0, 0, 112, 72).setInteractive({ useHandCursor: true });
+    hit.on('pointerdown', () => {
+      const speeds = BALANCE.playback.speeds as readonly number[];
+      this.setSpeed(speeds[(speeds.indexOf(this.speed) + 1) % speeds.length]);
+    });
+    c.add([bg, this.speedText, hit]);
+    this.refreshSpeedButton();
+  }
+
+  private setSpeed(speed: number): void {
+    if (!(BALANCE.playback.speeds as readonly number[]).includes(speed)) return;
+    this.speed = speed;
+    saveSpeed(speed);
+    this.refreshSpeedButton();
+  }
+
+  private refreshSpeedButton(): void {
+    this.speedText.setText(`${this.speed}x`);
+    // Anything but normal speed is shown in the boost colour so a sped-up round is obvious.
+    this.speedText.setColor(this.speed === 1 ? '#e8eef4' : '#ffb74d');
   }
 
   private buildBallPool(): void {
