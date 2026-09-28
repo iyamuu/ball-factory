@@ -10,7 +10,7 @@ export class ResultScene extends Phaser.Scene {
   }
 
   create(data: RoundResult): void {
-    const { score, previousBest, saved, line, speedCount, extendCount, peakRate, seed } = data;
+    const { score, previousBest, saved, line, speedCount, extendCount, peakRate } = data;
     const isNewBest = score > previousBest;
     const best = Math.max(score, previousBest);
 
@@ -50,22 +50,13 @@ export class ResultScene extends Phaser.Scene {
       .text(WIDTH / 2, 435, `PEAK ${peakRate.toFixed(1)} /s`, { fontFamily: FONT, fontSize: '28px', color: '#9fb3c8' })
       .setOrigin(0.5);
 
-    // Retry with a new seed (primary), or replay the same seed (small).
-    const btn = this.add.rectangle(WIDTH / 2, 545, 360, 100, 0x4fc3f7, 1);
+    const btn = this.add.rectangle(WIDTH / 2, 560, 360, 100, 0x4fc3f7, 1);
     btn.setStrokeStyle(4, 0xe8eef4, 1);
     btn.setInteractive({ useHandCursor: true });
     this.add
-      .text(WIDTH / 2, 545, 'RETRY', { fontFamily: FONT, fontSize: '48px', color: '#101418', fontStyle: 'bold' })
+      .text(WIDTH / 2, 560, 'RETRY', { fontFamily: FONT, fontSize: '48px', color: '#101418', fontStyle: 'bold' })
       .setOrigin(0.5);
-    // An explicit empty object: Phaser keeps the previous scene data (e.g. a SAME SEED replay) when data is falsy.
-    btn.on('pointerdown', () => this.scene.start('Game', {}));
-
-    const same = this.add
-      .text(WIDTH / 2, 640, `SAME SEED ${seed}`, { fontFamily: FONT, fontSize: '22px', color: '#9fb3c8' })
-      .setOrigin(0.5)
-      .setPadding(16, 10, 16, 10);
-    same.setInteractive({ useHandCursor: true });
-    same.on('pointerdown', () => this.scene.start('Game', { seed }));
+    btn.on('pointerdown', () => this.scene.start('Game'));
 
     if (!saved) {
       this.add
