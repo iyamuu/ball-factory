@@ -25,6 +25,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+        env:
+          # Round telemetry endpoint (docs/TELEMETRY.md). Unset variable: nothing is sent.
+          VITE_TELEMETRY_URL: ${{ vars.TELEMETRY_URL }}
+          VITE_BUILD: ${{ github.sha }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

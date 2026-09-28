@@ -5,6 +5,7 @@ import { BALANCE } from './config/balance';
  *   ?round=5   shorten the round to 5 seconds
  *   ?shake=0   disable camera shake
  *   ?seed=123  fix the offer seed for every round (default: a new random seed per round)
+ *   ?telemetry=0 (or =<localhost url>)  disable or redirect round telemetry (src/telemetry.ts)
  */
 const params = new URLSearchParams(window.location.search);
 
