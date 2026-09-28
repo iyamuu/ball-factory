@@ -365,6 +365,10 @@ export class GameScene extends Phaser.Scene {
       if (!status) return;
       if (m.id === 'accelerator') {
         status.setText(`${Math.floor(m.accum)}/${accel.ballsPerTrigger}`);
+        // While the boost runs the count is on hold (unless configured to keep counting): show it in
+        // the boost colour, the same as the ring around the source.
+        const held = this.sim.boostActive && !accel.countWhileBoosted;
+        status.setColor(held ? '#ffb74d' : '#9fb3c8');
       } else if (m.id === 'press') {
         status.setText(`${Math.round(m.processed * 100)}%`);
         status.setColor(m.processed >= 0.999 ? '#9fb3c8' : '#ffb74d');

@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "CommonJS",
+    "lib": ["ES2020", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "types": [],
+    "rootDir": "../..",
+    "outDir": "./dist"
+  },
+  "files": ["./main.ts", "../../src/config/balance.ts", "../../src/game/simulation.ts", "../../src/game/cards.ts", "../../src/game/rng.ts"]
+}
