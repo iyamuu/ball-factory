@@ -55,16 +55,36 @@ function getSheet() {
   return sheet;
 }
 
+/**
+ * Cells are written as plain numbers or literal text. A value that Sheets would read as a formula
+ * (leading =, +, -, @, tab or newline) is prefixed with an apostrophe, since anyone can post here.
+ */
+function num(v) {
+  var n = Number(v);
+  return isFinite(n) ? n : '';
+}
+
+function text(v, maxLen) {
+  var s = v === undefined || v === null ? '' : String(v);
+  if (s.length > maxLen) s = s.slice(0, maxLen);
+  if (/^[=+\-@\t\r\n]/.test(s)) s = "'" + s;
+  return s;
+}
+
 function toRow(r, body) {
-  var letters = function (ids) { return (ids || []).map(function (id) { return LETTER[id] || '?'; }).join(''); };
-  var offers = r.offers.map(function (o) { return letters(o.cards) + '>' + (LETTER[o.pick] || '?'); }).join(' ');
-  var picks = letters(r.offers.map(function (o) { return o.pick; }));
-  var decision = r.offers.map(function (o) { return Number(o.decisionSec).toFixed(1); }).join(' ');
+  var letters = function (ids) {
+    return (Array.isArray(ids) ? ids : []).map(function (id) { return LETTER[id] || '?'; }).join('');
+  };
+  var offers = r.offers.map(function (o) { return letters(o && o.cards) + '>' + (LETTER[o && o.pick] || '?'); }).join(' ');
+  var picks = letters(r.offers.map(function (o) { return o && o.pick; }));
+  var decision = r.offers.map(function (o) { var d = num(o && o.decisionSec); return d === '' ? '?' : d.toFixed(1); }).join(' ');
   var s = r.screen || {};
-  var screen = [s.w, s.h, 'x' + s.dpr, s.touch ? 'touch' : 'mouse'].join(' ');
+  var screen = [num(s.w), num(s.h), 'x' + num(s.dpr), s.touch ? 'touch' : 'mouse'].join(' ');
   return [
-    new Date(), r.time, r.player, r.build, r.seed, r.durationSec, r.roundLengthSec, r.score,
-    r.peakRate, r.speedCount, r.extendCount, letters(r.line), offers, picks, decision, screen, body,
+    new Date(), text(r.time, 40), text(r.player, 32), text(r.build, 64), num(r.seed), num(r.durationSec),
+    num(r.roundLengthSec), num(r.score), num(r.peakRate), num(r.speedCount), num(r.extendCount),
+    letters(r.line), text(offers, 400), text(picks, 40), text(decision, 200), text(screen, 60),
+    text(body, MAX_BODY_BYTES),
   ];
 }
 
