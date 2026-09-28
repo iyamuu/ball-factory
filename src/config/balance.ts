@@ -136,9 +136,9 @@ export const BALANCE = {
       id: 'accelerator',
       label: 'ACCEL',
       figure: `${MACHINES.accelerator.ballsPerTrigger} > ${MACHINES.accelerator.boostSecPerTrigger}s`,
-      desc: MACHINES.accelerator.scalesPressBudget
-        ? `Every ${MACHINES.accelerator.ballsPerTrigger} balls: source and presses x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`
-        : `Every ${MACHINES.accelerator.ballsPerTrigger} balls: speed x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`,
+      desc: `Every ${MACHINES.accelerator.ballsPerTrigger}${MACHINES.accelerator.countWhileBoosted ? '' : ' unboosted'} balls: ${
+        MACHINES.accelerator.scalesPressBudget ? 'source and presses' : 'speed'
+      } x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`,
       color: 0xffb74d,
       onLine: true,
     },
