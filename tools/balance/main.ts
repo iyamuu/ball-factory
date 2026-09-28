@@ -5,6 +5,7 @@
  *
  *   npm run balance                 # the configured spec (BALANCE as is), 20 seeds
  *   npm run balance -- --seeds 6    # fewer seeds
+ *   npm run balance -- --from 21    # seeds 21.. (a hold-out set not used when choosing numbers)
  *   npm run balance -- --variants   # the configured spec plus the variants listed in VARIANTS
  *   npm run balance -- --variant x3.0   # only the variants whose label contains the text
  *
@@ -30,7 +31,9 @@ function arg(name: string, fallback: string): string {
   const i = args.indexOf(`--${name}`);
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 }
-const SEEDS = Array.from({ length: Number(arg('seeds', '20')) }, (_, i) => i + 1);
+/** --seeds N: how many seeds; --from K: first seed (default 1), e.g. --from 21 for a hold-out set. */
+const FIRST_SEED = Number(arg('from', '1'));
+const SEEDS = Array.from({ length: Number(arg('seeds', '20')) }, (_, i) => FIRST_SEED + i);
 const RUN_VARIANTS = args.includes('--variants');
 /** --variant <text>: run only the variants whose label contains the text. */
 const VARIANT_FILTER = arg('variant', '');
@@ -47,18 +50,20 @@ interface Variant {
   apply: () => void;
 }
 
-/** Edit this list to compare specs. Every entry sets all four ACCEL numbers so the order of runs does not matter. */
+/** Edit this list to compare specs. Every entry sets all five ACCEL numbers so the order of runs does not matter. */
 interface AccelNumbers {
   rateMultiplier: number;
   countWhileBoosted: boolean;
   boostSecPerTrigger: number;
   ballsPerTrigger: number;
+  maxBoostSec: number;
 }
 const CONFIGURED: AccelNumbers = {
   rateMultiplier: accel.rateMultiplier,
   countWhileBoosted: accel.countWhileBoosted,
   boostSecPerTrigger: accel.boostSecPerTrigger,
   ballsPerTrigger: accel.ballsPerTrigger,
+  maxBoostSec: accel.maxBoostSec,
 };
 const accelVariant = (label: string, v: Partial<AccelNumbers>): Variant => ({
   label,
@@ -73,6 +78,7 @@ const VARIANTS: Variant[] = [
   accelVariant('no count while boosted, x3.5, boost 3 s', { countWhileBoosted: false, rateMultiplier: 3.5, boostSecPerTrigger: 3 }),
   accelVariant('no count while boosted, x3.0, boost 4 s (adopted)', { countWhileBoosted: false, rateMultiplier: 3.0, boostSecPerTrigger: 4 }),
   accelVariant('no count while boosted, x3.0, boost 3 s, 8 balls per trigger', { countWhileBoosted: false, rateMultiplier: 3.0, boostSecPerTrigger: 3, ballsPerTrigger: 8 }),
+  accelVariant('adopted with maxBoostSec 8', { countWhileBoosted: false, rateMultiplier: 3.0, boostSecPerTrigger: 4, maxBoostSec: 8 }),
 ];
 
 // ---------------------------------------------------------------- play
