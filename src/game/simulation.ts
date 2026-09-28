@@ -28,11 +28,13 @@ interface Group {
  * so cost does not grow with production. Rendering is handled separately with a capped pool.
  *
  * Per step:
- *   rate  = baseRate * (boost active ? accel multiplier : 1)   -- boost state from the previous step
+ *   boost = boost active ? accel multiplier : 1                -- boost state from the previous step
+ *   rate  = baseRate * boost
  *   batch = rate * dt balls at baseValue
  *   the batch passes through the line in order: Splitter multiplies count, Accelerator accumulates
- *   count and adds boost time per trigger, Press doubles the value of up to its capacity and lets
- *   the rest through unchanged
+ *   count and adds boost time per trigger, Press multiplies the value of up to the press budget and
+ *   lets the rest through unchanged
+ *   press budget = capacityPerSec * dt, scaled by SPEED picks and by the boost when configured so
  *   score += sum(count * value)
  */
 export class Simulation {
@@ -87,14 +89,35 @@ export class Simulation {
     return this.boostRemainingSec > 0;
   }
 
+  /** Source multiplier from the accelerator boost right now. */
+  get boostMultiplier(): number {
+    return this.boostActive ? this.accel.rateMultiplier : 1;
+  }
+
   /** Balls per second leaving the source right now. */
   get sourceRate(): number {
-    return this.baseRate * (this.boostActive ? this.accel.rateMultiplier : 1);
+    return this.baseRate * this.boostMultiplier;
+  }
+
+  /**
+   * Balls per second the presses can process right now, as a multiple of the configured capacity.
+   * SPEED picks and the boost scale it when their scalesPressBudget flags are set.
+   */
+  get pressBudgetMultiplier(): number {
+    const speed = BALANCE.machines.speed;
+    const bySpeed = speed.scalesPressBudget ? speed.multiplier ** this.speedCount : 1;
+    const byBoost = this.accel.scalesPressBudget ? this.boostMultiplier : 1;
+    return bySpeed * byBoost;
   }
 
   /** Score per second at the end of the line right now (no state is changed). */
   get scoreRate(): number {
-    const groups = this.runLine([{ count: this.sourceRate, value: BALANCE.production.baseValue }], 1, false);
+    const groups = this.runLine(
+      [{ count: this.sourceRate, value: BALANCE.production.baseValue }],
+      1,
+      this.pressBudgetMultiplier,
+      false,
+    );
     return groups.reduce((s, g) => s + g.count * g.value, 0);
   }
 
@@ -121,12 +144,19 @@ export class Simulation {
     const dt = this.stepSec;
     const wasActive = this.boostActive;
     const rate = this.sourceRate;
+    const budgetMultiplier = this.pressBudgetMultiplier;
 
     // Boost that was active during this step is consumed now; boost added below applies next step.
     this.boostRemainingSec = Math.max(0, this.boostRemainingSec - dt);
 
     const counter = { triggers: 0 };
-    const groups = this.runLine([{ count: rate * dt, value: BALANCE.production.baseValue }], dt, true, counter);
+    const groups = this.runLine(
+      [{ count: rate * dt, value: BALANCE.production.baseValue }],
+      dt,
+      budgetMultiplier,
+      true,
+      counter,
+    );
     const triggers = counter.triggers;
 
     let gained = 0;
@@ -143,14 +173,21 @@ export class Simulation {
   }
 
   /**
-   * Passes a batch through the line. With `mutate` true, accelerators accumulate and add boost
-   * time (counted into `counter`) and presses record their processed share; with false, nothing
-   * is changed.
+   * Passes a batch through the line. `budgetMultiplier` scales the press capacity for this batch.
+   * With `mutate` true, accelerators accumulate and add boost time (counted into `counter`) and
+   * presses record their processed share; with false, nothing is changed.
    */
-  private runLine(groups: Group[], dt: number, mutate: boolean, counter = { triggers: 0 }): Group[] {
+  private runLine(
+    groups: Group[],
+    dt: number,
+    budgetMultiplier: number,
+    mutate: boolean,
+    counter = { triggers: 0 },
+  ): Group[] {
     const press = BALANCE.machines.press;
+    const capacityPerPress = press.capacityPerSec * dt * budgetMultiplier;
     // Shared mode: one processing budget for the whole line, spent by presses in order.
-    let pressBudget = press.capacityPerSec * dt;
+    let pressBudget = capacityPerPress;
     for (const m of this.line) {
       switch (m.id) {
         case 'splitter':
@@ -171,7 +208,7 @@ export class Simulation {
         }
         case 'press': {
           const total = groups.reduce((s, g) => s + g.count, 0);
-          const capacity = press.shared ? pressBudget : press.capacityPerSec * dt;
+          const capacity = press.shared ? pressBudget : capacityPerPress;
           const share = total <= 0 ? 1 : Math.min(1, capacity / total);
           if (press.shared) pressBudget = Math.max(0, pressBudget - total * share);
           if (mutate) m.processed = share;

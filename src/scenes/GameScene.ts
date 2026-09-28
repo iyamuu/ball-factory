@@ -54,13 +54,8 @@ export interface RoundResult {
   extendCount: number;
   /** Highest score rate reached during the round. */
   peakRate: number;
-  /** Offer seed of this round, so the same sequence can be replayed. */
+  /** Offer seed of this round (for logs and ?seed= comparison runs). */
   seed: number;
-}
-
-/** Scene data accepted by GameScene.create(). */
-interface GameStart {
-  seed?: number;
 }
 
 /** Testing hook exposed on window.__bf. */
@@ -110,9 +105,9 @@ export class GameScene extends Phaser.Scene {
     super('Game');
   }
 
-  create(data?: GameStart): void {
+  create(): void {
     this.sim = new Simulation(RUNTIME.roundDurationSec);
-    this.seed = data?.seed ?? RUNTIME.fixedSeed ?? randomSeed();
+    this.seed = RUNTIME.fixedSeed ?? randomSeed();
     const extend = BALANCE.machines.extend;
     const longestRoundSec = RUNTIME.roundDurationSec + extend.maxPerRound * extend.seconds;
     this.offers = generateOffers(this.seed, longestRoundSec);

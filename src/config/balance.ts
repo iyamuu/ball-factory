@@ -34,10 +34,17 @@ const MACHINES = {
     maxBoostSec: 6,
     /**
      * Production rate multiplier while boost is active. Not stacked across accelerators.
-     * 2.0 chosen by brute force: at 1.5 ACCEL never appeared in an optimal pick sequence on six
-     * seeds; at 2.0 it appears in three of six without displacing SPLIT/PRESS (docs/DESIGN.md).
+     * Chosen by brute force (docs/DESIGN.md): with the press budget scaled by the boost, 2.5 puts
+     * ACCEL in every optimal pick sequence on the test seeds where 2.0 leaves it out of one.
      */
-    rateMultiplier: 2.0,
+    rateMultiplier: 2.5,
+    /**
+     * true: while boost is active the shared press budget is multiplied by rateMultiplier too,
+     * so the boost speeds up the whole factory instead of only pushing more balls past the
+     * presses. Chosen by brute force: without this ACCEL is in the optimum of 1 of 6 seeds,
+     * with it in 6 of 6 (docs/DESIGN.md).
+     */
+    scalesPressBudget: true,
   },
   press: {
     /** Value multiplier for processed balls. */
@@ -59,6 +66,12 @@ const MACHINES = {
   speed: {
     /** Source base rate multiplier. */
     multiplier: 1.5,
+    /**
+     * true: each SPEED also multiplies the shared press budget by `multiplier`, so the presses keep
+     * up with the faster source. Chosen by brute force: without this SPEED is in the optimum of
+     * 1 of 6 seeds, with it in 5 of 6 (docs/DESIGN.md).
+     */
+    scalesPressBudget: true,
   },
   extend: {
     /** Seconds added to the round. Offers keep coming every intervalSec until the round ends. */
@@ -91,9 +104,8 @@ export const BALANCE = {
     /** Number of cards shown per offer. Must be <= number of machine kinds. */
     choices: 3,
     /**
-     * Offer seed. null: a new random seed every round (shown on the result screen, and the
-     * player can replay the same seed). A number fixes the sequence for every round, which
-     * is what the ?seed= URL parameter does for testing and comparison.
+     * Offer seed. null: a new random seed every round. A number fixes the sequence for every
+     * round, which is what the ?seed= URL parameter does for testing and comparison.
      */
     seed: null as number | null,
   },
@@ -114,7 +126,9 @@ export const BALANCE = {
       id: 'accelerator',
       label: 'ACCEL',
       figure: `${MACHINES.accelerator.ballsPerTrigger} > ${MACHINES.accelerator.boostSecPerTrigger}s`,
-      desc: `Every ${MACHINES.accelerator.ballsPerTrigger} balls: speed x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`,
+      desc: MACHINES.accelerator.scalesPressBudget
+        ? `Every ${MACHINES.accelerator.ballsPerTrigger} balls: source and presses x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`
+        : `Every ${MACHINES.accelerator.ballsPerTrigger} balls: speed x${MACHINES.accelerator.rateMultiplier} for ${MACHINES.accelerator.boostSecPerTrigger}s`,
       color: 0xffb74d,
       onLine: true,
     },
@@ -132,7 +146,9 @@ export const BALANCE = {
       id: 'speed',
       label: 'SPEED',
       figure: `x${MACHINES.speed.multiplier}`,
-      desc: `Source speed x${MACHINES.speed.multiplier}`,
+      desc: MACHINES.speed.scalesPressBudget
+        ? `Source and presses x${MACHINES.speed.multiplier}`
+        : `Source speed x${MACHINES.speed.multiplier}`,
       color: 0x81c784,
       onLine: false,
     },
