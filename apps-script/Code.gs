@@ -9,6 +9,12 @@
  */
 
 var SHEET_NAME = 'rounds';
+/**
+ * Spreadsheet to write to. Empty: the spreadsheet this script is bound to (Extensions > Apps Script
+ * from the sheet). Set it to the ID from the sheet URL (/spreadsheets/d/<ID>/edit) for a standalone
+ * script, or if rows do not appear.
+ */
+var SPREADSHEET_ID = '';
 var MAX_BODY_BYTES = 20000;
 var HEADER = [
   'received', 'time', 'player', 'build', 'seed', 'durationSec', 'roundLengthSec', 'score',
@@ -43,7 +49,8 @@ function doGet() {
 }
 
 function getSheet() {
-  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ss = SPREADSHEET_ID ? SpreadsheetApp.openById(SPREADSHEET_ID) : SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No spreadsheet: set SPREADSHEET_ID');
   var sheet = ss.getSheetByName(SHEET_NAME);
   if (!sheet) {
     sheet = ss.insertSheet(SHEET_NAME);
