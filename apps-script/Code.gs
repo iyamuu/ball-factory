@@ -58,6 +58,10 @@ function getSheet() {
   if (sheet.getLastRow() === 0) {
     sheet.appendRow(HEADER);
     sheet.setFrozenRows(1);
+  } else if (sheet.getLastColumn() < HEADER.length) {
+    // The record grew (new columns are only ever appended): name the new columns on an existing sheet.
+    var from = sheet.getLastColumn();
+    sheet.getRange(1, from + 1, 1, HEADER.length - from).setValues([HEADER.slice(from)]);
   }
   return sheet;
 }
