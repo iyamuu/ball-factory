@@ -9,6 +9,8 @@ import { RUNTIME, randomSeed } from '../runtime';
 import { CardPanel } from '../ui/CardPanel';
 import { drawMachineIcon, FONT } from '../ui/icons';
 import { spawnPopup } from '../ui/Popup';
+import { playerId, recordRound, screenInfo, type OfferRecord } from '../telemetry';
+import { TELEMETRY } from '../config/telemetry';
 
 const LINE_Y = 440;
 const SOURCE_X = 110;
@@ -56,6 +58,10 @@ export interface RoundResult {
   peakRate: number;
   /** Offer seed of this round (for logs and ?seed= comparison runs). */
   seed: number;
+  /** Every offer of the round with the pick and how long it took. */
+  offers: OfferRecord[];
+  /** Round length including EXTEND. */
+  roundLengthSec: number;
 }
 
 /** Testing hook exposed on window.__bf. */
@@ -82,6 +88,9 @@ export class GameScene extends Phaser.Scene {
   private fxRng!: Rng;
   private peakRate = 0;
   private seed = 0;
+  private offerLog: OfferRecord[] = [];
+  /** Wall-clock time (performance.now) at which the open offer appeared. */
+  private offerShownAt = 0;
 
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
@@ -121,6 +130,7 @@ export class GameScene extends Phaser.Scene {
     this.popupGain = 0;
     this.pendingGainPopup = 0;
     this.peakRate = 0;
+    this.offerLog = [];
     this.fxRng = new Rng((Date.now() & 0xffffffff) >>> 0);
     this.machineNodes = [];
     this.machineXs = [];
@@ -213,6 +223,7 @@ export class GameScene extends Phaser.Scene {
   private showOffer(offer: Offer): void {
     // Production, the round timer and boost time all stop while the panel is open.
     this.paused = true;
+    this.offerShownAt = performance.now();
     const disabled = offer.cards.map((c) => !this.sim.canPick(c.id));
     this.panel.show(offer.cards, (i) => this.pickCard(i), disabled);
   }
@@ -223,6 +234,13 @@ export class GameScene extends Phaser.Scene {
     const def: MachineDef | undefined = offer?.cards[index];
     if (!def || !this.sim.canPick(def.id)) return; // missing or greyed-out card
 
+    this.offerLog.push({
+      index: this.nextOffer,
+      atSec: offer.atSec,
+      cards: offer.cards.map((c) => c.id),
+      pick: def.id,
+      decisionSec: Math.round(performance.now() - this.offerShownAt) / 1000,
+    });
     this.nextOffer += 1;
     this.panel.hide();
     this.paused = false;
@@ -263,7 +281,26 @@ export class GameScene extends Phaser.Scene {
       extendCount: this.sim.extendCount,
       peakRate: this.peakRate,
       seed: this.seed,
+      offers: this.offerLog,
+      roundLengthSec: this.sim.durationSec + this.sim.bonusTimeSec,
     };
+    // Fire-and-forget: the record is stored locally and posted when an endpoint is configured.
+    recordRound({
+      v: TELEMETRY.version,
+      build: TELEMETRY.build,
+      player: playerId(),
+      time: new Date().toISOString(),
+      seed: this.seed,
+      durationSec: this.sim.durationSec,
+      roundLengthSec: result.roundLengthSec,
+      score,
+      peakRate: Math.round(this.peakRate * 10) / 10,
+      line: result.line,
+      speedCount: result.speedCount,
+      extendCount: result.extendCount,
+      offers: this.offerLog,
+      screen: screenInfo(),
+    });
     this.scene.start('Result', result);
   }
 

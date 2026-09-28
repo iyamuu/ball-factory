@@ -3,6 +3,7 @@ import { BALANCE, type MachineId } from '../config/balance';
 import { WIDTH, HEIGHT } from '../main';
 import { drawMachineIcon, FONT } from '../ui/icons';
 import type { RoundResult } from './GameScene';
+import { formatLog } from '../telemetry';
 
 export class ResultScene extends Phaser.Scene {
   constructor() {
@@ -62,6 +63,25 @@ export class ResultScene extends Phaser.Scene {
       this.add
         .text(WIDTH - 24, HEIGHT - 20, 'no save', { fontFamily: FONT, fontSize: '18px', color: '#5f6f80' })
         .setOrigin(1, 1);
+    }
+
+    // Copies the local round log (JSON) for playtests without a telemetry endpoint.
+    const copy = this.add
+      .text(24, HEIGHT - 20, 'COPY LOG', { fontFamily: FONT, fontSize: '18px', color: '#5f6f80' })
+      .setOrigin(0, 1)
+      .setPadding(12, 10, 12, 10);
+    copy.setInteractive({ useHandCursor: true });
+    copy.on('pointerdown', () => {
+      void this.copyLog().then((ok) => copy.setText(ok ? 'COPIED' : 'COPY FAILED'));
+    });
+  }
+
+  private async copyLog(): Promise<boolean> {
+    try {
+      await navigator.clipboard.writeText(formatLog());
+      return true;
+    } catch {
+      return false;
     }
   }
 

@@ -38,3 +38,11 @@ For this repository: https://iyamuu.github.io/ball-factory/
 
 All gameplay numbers (round length, base production, card timing, machine effects, screen shake) live in
 `src/config/balance.ts`.
+
+## Round telemetry (optional)
+
+At the end of a round the game can post one JSON record (seed, every offer and pick, decision times, score,
+build, screen size) to a Google Apps Script web app that appends it to a private Google Sheet. Nothing is
+sent unless the endpoint is configured; the last 20 rounds are always kept in the browser and can be copied
+from the result screen with COPY LOG. Setup steps and the script: `docs/TELEMETRY.md`, `apps-script/Code.gs`.
+Settings: `src/config/telemetry.ts`.
