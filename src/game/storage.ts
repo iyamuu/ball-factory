@@ -40,6 +40,24 @@ export function loadSpeed(): number | undefined {
   }
 }
 
+/** Speaker button state, or undefined if never toggled (or storage unavailable). */
+export function loadSoundEnabled(): boolean | undefined {
+  try {
+    const v = localStorage.getItem(BALANCE.storage.soundKey);
+    return v === null ? undefined : v === '1';
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveSoundEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem(BALANCE.storage.soundKey, enabled ? '1' : '0');
+  } catch {
+    // storage unavailable: the choice lasts until the page is reloaded
+  }
+}
+
 export function saveSpeed(speed: number): void {
   try {
     localStorage.setItem(BALANCE.storage.speedKey, String(speed));

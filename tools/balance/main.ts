@@ -8,11 +8,13 @@
  *   npm run balance -- --from 21    # seeds 21.. (a hold-out set not used when choosing numbers)
  *   npm run balance -- --variants   # the configured spec plus the variants listed in VARIANTS
  *   npm run balance -- --variant x3.0   # only the variants whose label contains the text
+ *   npm run balance -- --rates          # score-rate distributions (random / simple / optimum) for fever thresholds
  *
  * Results are printed as Markdown tables so they can be pasted into docs/DESIGN.md.
  */
 import { BALANCE, type MachineId } from '../../src/config/balance';
 import { generateOffers, type Offer } from '../../src/game/cards';
+import { Rng } from '../../src/game/rng';
 import { Simulation } from '../../src/game/simulation';
 
 type Chooser = (sim: Simulation, cards: MachineId[], allowed: boolean[]) => MachineId;
@@ -83,7 +85,14 @@ const VARIANTS: Variant[] = [
 
 // ---------------------------------------------------------------- play
 
-function play(offers: Offer[], choose: Chooser): number {
+/** Score rate trace of one play: the peak and the rate at a few sim times (for fever thresholds). */
+interface RateTrace {
+  peak: number;
+  at: Record<number, number>;
+}
+const TRACE_TIMES = [20, 35, 50, 70];
+
+function play(offers: Offer[], choose: Chooser, trace?: RateTrace): number {
   const sim = new Simulation(DURATION);
   let k = 0;
   while (!sim.ended) {
@@ -94,6 +103,11 @@ function play(offers: Offer[], choose: Chooser): number {
       k += 1;
     }
     sim.step();
+    if (trace) {
+      const r = sim.scoreRate;
+      trace.peak = Math.max(trace.peak, r);
+      for (const t of TRACE_TIMES) if (Math.abs(sim.timeSec - t) < sim.stepSec / 2) trace.at[t] = r;
+    }
   }
   return sim.score;
 }
@@ -182,15 +196,10 @@ function optimum(offers: Offer[]): Optimum {
 
 // ---------------------------------------------------------------- random
 
+/** The game's own generator, so the tool and the game never drift apart. */
 function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  const rng = new Rng(seed >>> 0);
+  return () => rng.next();
 }
 
 function randomRatios(offers: Offer[], best: number, seed: number): number[] {
@@ -282,7 +291,45 @@ function runSpec(label: string): void {
   console.log(`optimum score range: ${Math.round(Math.min(...scores))} .. ${Math.round(Math.max(...scores))}`);
 }
 
-if (RUN_VARIANTS || VARIANT_FILTER) {
+/** --rates: score-rate distributions for random, a simple strategy and the optimum (fever thresholds). */
+function runRates(): void {
+  const q = (xs: number[], p: number): number => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))];
+  const random: RateTrace[] = [];
+  const simple: RateTrace[] = [];
+  const opt: RateTrace[] = [];
+  for (const seed of SEEDS) {
+    const offers = generateOffers(seed, LONGEST);
+    const rng = mulberry32(seed * 7919);
+    for (let i = 0; i < RANDOM_RUNS; i++) {
+      const t: RateTrace = { peak: 0, at: {} };
+      play(offers, (_sim, cards, allowed) => { const o = cards.filter((_, j) => allowed[j]); return o[Math.floor(rng() * o.length)]; }, t);
+      random.push(t);
+    }
+    const ts: RateTrace = { peak: 0, at: {} };
+    play(offers, STRATEGIES['P>A>V early, S in the last 20 s'], ts);
+    simple.push(ts);
+    const best = optimum(offers);
+    let k = 0;
+    const to: RateTrace = { peak: 0, at: {} };
+    play(offers, () => best.picks[k++], to);
+    opt.push(to);
+  }
+  console.log(`\n## score rate (/s) distributions, ${SEEDS.length} seeds, random x${RANDOM_RUNS}\n`);
+  console.log('| player | p25 | p50 | p75 | p90 | max |');
+  console.log('|---|---|---|---|---|---|');
+  const row = (label: string, xs: number[]): void =>
+    console.log(`| ${label} | ${q(xs, 0.25).toFixed(1)} | ${q(xs, 0.5).toFixed(1)} | ${q(xs, 0.75).toFixed(1)} | ${q(xs, 0.9).toFixed(1)} | ${Math.max(...xs).toFixed(1)} |`);
+  for (const t of TRACE_TIMES) row(`random, rate at ${t} s`, random.map((r) => r.at[t] ?? 0));
+  row('random, peak', random.map((r) => r.peak));
+  for (const t of TRACE_TIMES) row(`simple rule, rate at ${t} s`, simple.map((r) => r.at[t] ?? 0));
+  row('simple rule, peak', simple.map((r) => r.peak));
+  for (const t of TRACE_TIMES) row(`optimum, rate at ${t} s`, opt.map((r) => r.at[t] ?? 0));
+  row('optimum, peak', opt.map((r) => r.peak));
+}
+
+if (args.includes('--rates')) {
+  runRates();
+} else if (RUN_VARIANTS || VARIANT_FILTER) {
   for (const v of VARIANTS) {
     if (VARIANT_FILTER && !v.label.includes(VARIANT_FILTER)) continue;
     v.apply();

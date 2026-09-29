@@ -3,8 +3,9 @@ import { BALANCE, type MachineDef, type MachineId } from '../config/balance';
 import { generateOffers, type Offer } from '../game/cards';
 import { Rng } from '../game/rng';
 import { Simulation } from '../game/simulation';
-import { loadBest, loadSpeed, saveBest, saveSpeed } from '../game/storage';
-import { WIDTH } from '../main';
+import { loadBest, loadSoundEnabled, loadSpeed, saveBest, saveSoundEnabled, saveSpeed } from '../game/storage';
+import { Sfx, type SfxName } from '../audio/sfx';
+import { WIDTH, HEIGHT } from '../main';
 import { RUNTIME, randomSeed } from '../runtime';
 import { CardPanel } from '../ui/CardPanel';
 import { drawMachineIcon, FONT } from '../ui/icons';
@@ -78,12 +79,26 @@ interface DebugHook {
   retry: () => void;
   speed: () => number;
   setSpeed: (speed: number) => void;
+  /** Times each sound effect was requested this round (played or not). */
+  sounds: () => Record<SfxName, number>;
+  soundEnabled: () => boolean;
+  /** Fever stage reached so far this round (0..3). */
+  fever: () => number;
 }
+
+/** Background colour per fever stage (0 = normal). Deeper and warmer as the stage rises. */
+const FEVER_BACKGROUND = [0x101418, 0x121a2e, 0x1e1432, 0x2c1410];
+/** Line colour per fever stage. */
+const FEVER_LINE = [0x2b3642, 0x2f4a6a, 0x5a3a7a, 0x8a4a2a];
+/** "+N" popup colour per fever stage. */
+const FEVER_POPUP = ['#c8f7c5', '#9fd8ff', '#e0a8ff', '#ffc27a'];
 
 /** Offset of the restart button from the top-right corner, clear of the timer and score. */
 const RETRY_INSET = 56;
 /** Horizontal distance from the restart button to the speed button on its left. */
 const SPEED_BUTTON_GAP = 116;
+/** Horizontal distance from the speed button to the speaker on its left. */
+const SPEAKER_GAP = 96;
 /**
  * Speed picked with the button on this page. It wins over ?speed= and the saved speed, so a retry
  * keeps the player's pick even when the URL has ?speed= or storage is unavailable.
@@ -109,6 +124,15 @@ export class GameScene extends Phaser.Scene {
   /** Sim-time played at each speed, for telemetry. */
   private speedSec: Record<string, number> = {};
   private speedText!: Phaser.GameObjects.Text;
+  private sfx!: Sfx;
+  private speakerGfx!: Phaser.GameObjects.Graphics;
+  /** Best score before this round; passing it mid-round triggers the BEST effect once. */
+  private previousBest = 0;
+  private bestPassed = false;
+  /** "/s" readout while it counts up after a pick; null shows the live value. */
+  private rateDisplay: { value: number } | null = null;
+  /** Fever stage, 0..thresholds.length. Only ever rises within a round. */
+  private feverStage = 0;
 
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
@@ -151,6 +175,18 @@ export class GameScene extends Phaser.Scene {
     this.offerLog = [];
     this.speed = pickedSpeed ?? RUNTIME.speed ?? loadSpeed() ?? BALANCE.playback.defaultSpeed;
     this.speedSec = {};
+    this.previousBest = loadBest();
+    this.bestPassed = false;
+    this.rateDisplay = null;
+    this.feverStage = 0;
+    this.cameras.main.setBackgroundColor(FEVER_BACKGROUND[0]);
+    // The Sfx object outlives scene restarts so the unlocked audio context is kept; the per-round
+    // counters start again.
+    this.sfx ??= new Sfx(RUNTIME.sound ?? loadSoundEnabled() ?? BALANCE.sound.enabled);
+    this.sfx.resetCounts();
+    // Browsers allow audio only after a user gesture. The capture-phase DOM listeners run before
+    // Phaser dispatches the same event to a card or button, so the first tap's sound plays too.
+    this.sfx.bindUnlock(this.game.canvas);
     this.fxRng = new Rng((Date.now() & 0xffffffff) >>> 0);
     this.machineNodes = [];
     this.machineXs = [];
@@ -161,6 +197,7 @@ export class GameScene extends Phaser.Scene {
     this.panel = new CardPanel(this);
     this.buildRetryButton();
     this.buildSpeedButton();
+    this.buildSpeakerButton();
     this.layoutMachines();
     this.refreshTexts();
     this.refreshSource();
@@ -178,6 +215,9 @@ export class GameScene extends Phaser.Scene {
       retry: () => this.retry(),
       speed: () => this.speed,
       setSpeed: (speed) => this.setSpeed(speed),
+      sounds: () => ({ ...this.sfx.counts }),
+      soundEnabled: () => this.sfx.enabled,
+      fever: () => this.feverStage,
     };
     (window as unknown as { __bf: DebugHook }).__bf = hook;
   }
@@ -220,17 +260,27 @@ export class GameScene extends Phaser.Scene {
 
   private runSimStep(): void {
     const res = this.sim.step();
+    // scoreRate runs the line once; compute it a single time per step for the peak and the fever check.
+    const rate = this.sim.scoreRate;
     this.popupGain += res.gained;
     // Popups are paced in wall-clock time so their fixed lifetime still keeps them from stacking.
     this.popupAcc += this.sim.stepSec / this.speed;
     const key = String(this.speed);
     this.speedSec[key] = (this.speedSec[key] ?? 0) + this.sim.stepSec;
-    this.peakRate = Math.max(this.peakRate, this.sim.scoreRate);
+    this.peakRate = Math.max(this.peakRate, rate);
 
     if (res.boostStarted) {
       this.flashBoost();
       this.shake(0.5);
+      this.sfx.accel();
     }
+
+    // Compare the floored score, which is what the screen shows and endRound() saves.
+    if (!this.bestPassed && this.previousBest > 0 && Math.floor(this.sim.score) > this.previousBest) {
+      this.bestPassed = true;
+      this.showBestPassed();
+    }
+    this.checkFever(rate);
 
     if (this.popupAcc >= BALANCE.visuals.popupIntervalSec) {
       this.popupAcc = 0;
@@ -254,6 +304,7 @@ export class GameScene extends Phaser.Scene {
     // Production, the round timer and boost time all stop while the panel is open.
     this.paused = true;
     this.offerShownAt = performance.now();
+    this.sfx.offer();
     const disabled = offer.cards.map((c) => !this.sim.canPick(c.id));
     this.panel.show(offer.cards, (i) => this.pickCard(i), disabled);
   }
@@ -283,24 +334,134 @@ export class GameScene extends Phaser.Scene {
 
     const afterRate = this.sim.scoreRate;
     this.peakRate = Math.max(this.peakRate, afterRate);
-    // Show what the pick did to the rate, e.g. "12.0 -> 24.0 /s". A machine whose effect is
-    // deferred (ACCEL changes nothing until it triggers) shows its description instead.
+    // Show what the pick did: the multiplier in the centre while the "/s" readout counts up to
+    // the new value. A machine whose effect is deferred (ACCEL changes nothing until it
+    // triggers) shows its description instead; time added lives at the timer.
     if (this.sim.remainingSec !== beforeRemaining) {
-      // Time was added: the effect lives at the timer, not in the centre.
       this.showTimeGain(this.sim.remainingSec - beforeRemaining);
+      this.sfx.extend();
     } else {
-      const message =
-        afterRate !== beforeRate ? `${beforeRate.toFixed(1)} → ${afterRate.toFixed(1)} /s` : def.desc;
-      spawnPopup(this, WIDTH / 2, 300, message, true);
+      this.sfx.pick(beforeRate > 0 ? afterRate / beforeRate : 1);
+      if (afterRate > beforeRate) {
+        this.showMultiplier(afterRate / beforeRate, def.color);
+        this.countUpRate(beforeRate, afterRate);
+      } else {
+        spawnPopup(this, WIDTH / 2, 300, def.desc, true);
+      }
     }
     if (afterRate >= beforeRate * 1.5) this.shake(1);
+    this.checkFever(afterRate);
+  }
+
+  /** Raises the fever stage when the score rate passes the next threshold. Never lowers it. */
+  private checkFever(rate: number): void {
+    const thresholds = BALANCE.fever.thresholds;
+    let stage = this.feverStage;
+    while (stage < thresholds.length && rate >= thresholds[stage]) stage += 1;
+    if (stage === this.feverStage) return;
+    this.feverStage = stage;
+    this.sfx.fever(stage);
+    // Background and line shift to the stage colour; a short flash marks the moment.
+    const from = Phaser.Display.Color.IntegerToColor(this.cameras.main.backgroundColor.color);
+    const to = Phaser.Display.Color.IntegerToColor(FEVER_BACKGROUND[stage]);
+    const mix = { t: 0 };
+    this.tweens.add({
+      targets: mix,
+      t: 1,
+      duration: 600,
+      onUpdate: () => {
+        const c = Phaser.Display.Color.Interpolate.ColorWithColor(from, to, 1, mix.t);
+        this.cameras.main.setBackgroundColor(Phaser.Display.Color.GetColor(c.r, c.g, c.b));
+      },
+    });
+    this.lineGfx.clear();
+    this.lineGfx.lineStyle(6, FEVER_LINE[stage], 1);
+    this.lineGfx.lineBetween(SOURCE_X, LINE_Y, BIN_X, LINE_Y);
+    const flash = this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, FEVER_LINE[stage], 0.35).setDepth(40);
+    this.tweens.add({ targets: flash, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
+    // Below the line, clear of the multiplier popup at the centre and the machine labels.
+    const label = this.add
+      .text(WIDTH / 2, 610, `FEVER ${stage}`, { fontFamily: FONT, fontSize: '72px', color: FEVER_POPUP[stage], fontStyle: 'bold' })
+      .setOrigin(0.5)
+      .setDepth(50)
+      .setScale(0.5);
+    this.tweens.add({ targets: label, scale: 1, duration: 200, ease: 'Back.Out' });
+    this.tweens.add({ targets: label, alpha: 0, y: 560, delay: 500, duration: 700, onComplete: () => label.destroy() });
+    this.shake(1);
+  }
+
+  /** Big "x3" in the card colour: punches in, then rises and fades. */
+  private showMultiplier(ratio: number, color: number): void {
+    const label = `x${Number.isInteger(ratio) ? ratio : ratio.toFixed(1)}`;
+    const t = this.add
+      .text(WIDTH / 2, 300, label, {
+        fontFamily: FONT,
+        fontSize: '96px',
+        color: Phaser.Display.Color.IntegerToColor(color).rgba,
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setDepth(50)
+      .setScale(0.4);
+    this.tweens.add({ targets: t, scale: 1, duration: 180, ease: 'Back.Out' });
+    this.tweens.add({
+      targets: t,
+      y: 240,
+      alpha: 0,
+      delay: 250,
+      duration: BALANCE.feedback.multiplierPopupMs - 250,
+      ease: 'Cubic.In',
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  /** The "/s" readout rolls from the old to the new value instead of jumping. */
+  private countUpRate(from: number, to: number): void {
+    const display = { value: from };
+    this.rateDisplay = display;
+    this.rateText.setColor('#ffd54f');
+    this.tweens.add({
+      targets: display,
+      value: to,
+      duration: BALANCE.feedback.rateCountUpMs,
+      ease: 'Cubic.Out',
+      onComplete: () => {
+        if (this.rateDisplay === display) this.rateDisplay = null;
+        this.rateText.setColor('#9fb3c8');
+      },
+    });
+  }
+
+  /** Score just passed the previous best: "BEST" beside the score, score flashes, arpeggio. */
+  private showBestPassed(): void {
+    this.sfx.best();
+    const t = this.add
+      .text(WIDTH / 2 + 200, 110, 'BEST', { fontFamily: FONT, fontSize: '40px', color: '#ffd54f', fontStyle: 'bold' })
+      .setOrigin(0, 0.5)
+      .setDepth(50)
+      .setScale(0.4);
+    this.tweens.add({ targets: t, scale: 1, duration: 200, ease: 'Back.Out' });
+    this.tweens.add({ targets: t, alpha: 0, delay: 1400, duration: 600, onComplete: () => t.destroy() });
+    this.scoreText.setColor('#ffd54f');
+    this.tweens.add({
+      targets: this.scoreText,
+      scale: 1.15,
+      duration: 160,
+      yoyo: true,
+      ease: 'Quad.Out',
+      onComplete: () => this.scoreText.setColor('#ffffff'),
+    });
   }
 
   private endRound(): void {
     this.ended = true;
     this.panel.hide();
+    this.pendingGainPopup = 0;
     const score = Math.floor(this.sim.score);
     const previousBest = loadBest();
+    // Same condition as the NEW BEST label on the result screen, so a first-ever best gets the fanfare too.
+    if (score > previousBest) this.sfx.fanfare();
+    else this.sfx.end();
     const saved = score > previousBest ? saveBest(score) : true;
     const result: RoundResult = {
       score,
@@ -348,6 +509,8 @@ export class GameScene extends Phaser.Scene {
       screen: screenInfo(),
       speed: this.speed,
       speedSec: Object.fromEntries(Object.entries(this.speedSec).map(([k, v]) => [k, Math.round(v * 100) / 100])),
+      muted: !this.sfx.enabled,
+      fever: this.feverStage,
     };
   }
 
@@ -443,7 +606,46 @@ export class GameScene extends Phaser.Scene {
   private refreshTexts(): void {
     this.timerText.setText(String(Math.ceil(this.sim.remainingSec)));
     this.scoreText.setText(Math.floor(this.sim.score).toLocaleString('en-US'));
-    this.rateText.setText(`${this.sim.scoreRate.toFixed(1)} /s`);
+    const rate = this.rateDisplay ? this.rateDisplay.value : this.sim.scoreRate;
+    this.rateText.setText(`${rate.toFixed(1)} /s`);
+  }
+
+  /** Speaker left of the speed button in the top-right row; a tap toggles all sound. */
+  private buildSpeakerButton(): void {
+    const c = this.add.container(WIDTH - RETRY_INSET - SPEED_BUTTON_GAP - SPEAKER_GAP, RETRY_INSET).setDepth(200);
+    c.add(this.add.circle(0, 0, 26, 0x1c232b, 1).setStrokeStyle(3, 0x9fb3c8, 1));
+    this.speakerGfx = this.add.graphics();
+    const hit = this.add.zone(0, 0, 72, 72).setInteractive({ useHandCursor: true });
+    hit.on('pointerdown', () => {
+      this.sfx.setEnabled(!this.sfx.enabled);
+      saveSoundEnabled(this.sfx.enabled);
+      this.drawSpeaker();
+    });
+    c.add([this.speakerGfx, hit]);
+    this.drawSpeaker();
+  }
+
+  private drawSpeaker(): void {
+    const g = this.speakerGfx;
+    const on = this.sfx.enabled;
+    const color = on ? 0x9fb3c8 : 0x5f6f80;
+    g.clear();
+    g.fillStyle(color, 1);
+    g.fillRect(-14, -6, 8, 12);
+    g.fillTriangle(-6, -8, 6, -16, 6, 16);
+    g.fillTriangle(-6, -8, 6, 16, -6, 8);
+    g.lineStyle(3, color, 1);
+    if (on) {
+      g.beginPath();
+      g.arc(6, 0, 10, Phaser.Math.DegToRad(-40), Phaser.Math.DegToRad(40), false);
+      g.strokePath();
+      g.beginPath();
+      g.arc(6, 0, 16, Phaser.Math.DegToRad(-40), Phaser.Math.DegToRad(40), false);
+      g.strokePath();
+    } else {
+      g.lineStyle(3, 0xef5350, 1);
+      g.lineBetween(-16, -16, 20, 16);
+    }
   }
 
   private refreshSource(): void {
@@ -474,8 +676,11 @@ export class GameScene extends Phaser.Scene {
 
   /** One fixed lane to the right of the rate text; lifetime matches the interval so popups do not stack. */
   private flushGainPopup(): void {
-    if (this.pendingGainPopup <= 0) return;
-    spawnPopup(this, WIDTH / 2 + 230, 215, `+${this.pendingGainPopup}`, false);
+    // After the round ends only the ending cue plays; a popup that fell on the last step is dropped.
+    // While an offer is open only its cue plays; a popup that fell on the same step waits for the pick.
+    if (this.pendingGainPopup <= 0 || this.ended || this.paused) return;
+    spawnPopup(this, WIDTH / 2 + 230, 215, `+${this.pendingGainPopup}`, false, FEVER_POPUP[this.feverStage]);
+    this.sfx.gain(this.pendingGainPopup, this.feverStage);
     this.pendingGainPopup = 0;
   }
 

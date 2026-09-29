@@ -19,7 +19,7 @@ var MAX_BODY_BYTES = 20000;
 var HEADER = [
   'received', 'time', 'player', 'build', 'seed', 'durationSec', 'roundLengthSec', 'score',
   'peakRate', 'speedCount', 'extendCount', 'line', 'offers', 'picks', 'decisionSec',
-  'screen', 'raw', 'abandoned', 'playedSec', 'speed', 'speedSec',
+  'screen', 'raw', 'abandoned', 'playedSec', 'speed', 'speedSec', 'muted', 'fever',
 ];
 var LETTER = { splitter: 'S', accelerator: 'A', press: 'P', speed: 'V', extend: 'E' };
 
@@ -99,6 +99,7 @@ function toRow(r, body) {
     num(r.roundLengthSec), num(r.score), num(r.peakRate), num(r.speedCount), num(r.extendCount),
     letters(r.line), text(offers, 400), text(picks, 40), text(decision, 200), text(screen, 60),
     text(body, MAX_BODY_BYTES), r.abandoned ? 1 : 0, num(r.playedSec), num(r.speed), text(speeds, 80),
+    r.muted ? 1 : 0, num(r.fever),
   ];
 }
 

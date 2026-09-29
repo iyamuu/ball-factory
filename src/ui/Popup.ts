@@ -1,13 +1,13 @@
 import Phaser from 'phaser';
 import { FONT } from './icons';
 
-/** Spawns a floating "+N" text that rises and fades out. */
-export function spawnPopup(scene: Phaser.Scene, x: number, y: number, text: string, big: boolean): void {
+/** Spawns a floating "+N" text that rises and fades out. `color` overrides the default for the size. */
+export function spawnPopup(scene: Phaser.Scene, x: number, y: number, text: string, big: boolean, color?: string): void {
   const t = scene.add
     .text(x, y, text, {
       fontFamily: FONT,
       fontSize: big ? '44px' : '30px',
-      color: big ? '#ffd54f' : '#c8f7c5',
+      color: color ?? (big ? '#ffd54f' : '#c8f7c5'),
       fontStyle: 'bold',
     })
     .setOrigin(0.5)
