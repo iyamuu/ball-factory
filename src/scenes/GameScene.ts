@@ -182,7 +182,9 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(FEVER_BACKGROUND[0]);
     // The Sfx object outlives scene restarts so the unlocked audio context is kept.
     this.sfx ??= new Sfx(RUNTIME.sound ?? loadSoundEnabled() ?? BALANCE.sound.enabled);
-    // Browsers allow audio only after a user gesture: unlock on any pointer down on the canvas.
+    // Browsers allow audio only after a user gesture. The capture-phase DOM listener runs before
+    // Phaser dispatches the same event to a card or button, so the first tap's sound plays too.
+    this.sfx.bindUnlock(this.game.canvas);
     this.input.on('pointerdown', () => this.sfx.unlock());
     this.fxRng = new Rng((Date.now() & 0xffffffff) >>> 0);
     this.machineNodes = [];
@@ -270,7 +272,8 @@ export class GameScene extends Phaser.Scene {
       this.sfx.accel();
     }
 
-    if (!this.bestPassed && this.previousBest > 0 && this.sim.score > this.previousBest) {
+    // Compare the floored score, which is what the screen shows and endRound() saves.
+    if (!this.bestPassed && this.previousBest > 0 && Math.floor(this.sim.score) > this.previousBest) {
       this.bestPassed = true;
       this.showBestPassed();
     }

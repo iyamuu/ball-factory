@@ -42,9 +42,24 @@ export class Sfx {
     fanfare: 0,
   };
 
+  private bound = false;
+
   constructor(public enabled: boolean) {}
 
-  /** Creates or resumes the audio context. Call from a pointer event handler. */
+  /**
+   * Unlocks on the first gesture at the DOM level, in the capture phase, so the context exists
+   * before any game-object handler (a card tap, a button) asks for its sound. Bound once.
+   */
+  bindUnlock(target: EventTarget): void {
+    if (this.bound) return;
+    this.bound = true;
+    const unlock = (): void => this.unlock();
+    for (const type of ['pointerdown', 'touchstart', 'mousedown', 'keydown']) {
+      target.addEventListener(type, unlock, { capture: true, passive: true });
+    }
+  }
+
+  /** Creates or resumes the audio context. Call from a user gesture. */
   unlock(): void {
     try {
       if (!this.ctx) {
@@ -150,8 +165,11 @@ export class Sfx {
   }
 
   private play(notes: Note[]): void {
-    if (!this.enabled || !this.ctx || !this.master || this.ctx.state !== 'running') return;
+    if (!this.enabled || !this.ctx || !this.master) return;
     try {
+      // A context created in this same gesture may still be resuming: notes scheduled now play
+      // as soon as it runs, so do not drop them.
+      if (this.ctx.state === 'suspended') void this.ctx.resume().catch(() => undefined);
       const t0 = this.ctx.currentTime;
       for (const n of notes) {
         const osc = this.ctx.createOscillator();
