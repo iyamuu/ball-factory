@@ -180,8 +180,10 @@ export class GameScene extends Phaser.Scene {
     this.rateDisplay = null;
     this.feverStage = 0;
     this.cameras.main.setBackgroundColor(FEVER_BACKGROUND[0]);
-    // The Sfx object outlives scene restarts so the unlocked audio context is kept.
+    // The Sfx object outlives scene restarts so the unlocked audio context is kept; the per-round
+    // counters start again.
     this.sfx ??= new Sfx(RUNTIME.sound ?? loadSoundEnabled() ?? BALANCE.sound.enabled);
+    this.sfx.resetCounts();
     // Browsers allow audio only after a user gesture. The capture-phase DOM listeners run before
     // Phaser dispatches the same event to a card or button, so the first tap's sound plays too.
     this.sfx.bindUnlock(this.game.canvas);

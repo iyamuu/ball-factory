@@ -51,6 +51,11 @@ export class Sfx {
 
   constructor(public enabled: boolean) {}
 
+  /** Zeroes the per-round request counters (the audio context is kept). */
+  resetCounts(): void {
+    for (const k of Object.keys(this.counts) as SfxName[]) this.counts[k] = 0;
+  }
+
   /** Turns sound on or off. Off also silences notes already playing, through the master gain. */
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
