@@ -455,7 +455,8 @@ export class GameScene extends Phaser.Scene {
     this.panel.hide();
     const score = Math.floor(this.sim.score);
     const previousBest = loadBest();
-    if (score > previousBest && previousBest > 0) this.sfx.fanfare();
+    // Same condition as the NEW BEST label on the result screen, so a first-ever best gets the fanfare too.
+    if (score > previousBest) this.sfx.fanfare();
     else this.sfx.end();
     const saved = score > previousBest ? saveBest(score) : true;
     const result: RoundResult = {
