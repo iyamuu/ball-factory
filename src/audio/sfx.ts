@@ -51,6 +51,21 @@ export class Sfx {
 
   constructor(public enabled: boolean) {}
 
+  /** Turns sound on or off. Off also silences notes already playing, through the master gain. */
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    if (!enabled) this.pending = null;
+    try {
+      if (this.master && this.ctx) {
+        const g = this.master.gain;
+        g.cancelScheduledValues(this.ctx.currentTime);
+        g.setValueAtTime(enabled ? BALANCE.sound.masterVolume : 0, this.ctx.currentTime);
+      }
+    } catch {
+      // no audio context yet: the flag alone is enough
+    }
+  }
+
   /**
    * Unlocks at the DOM level, in the capture phase, so the context exists before any game-object
    * handler (a card tap, a button) asks for its sound. Browsers count only some events as user
@@ -76,7 +91,7 @@ export class Sfx {
         if (!Ctor) return;
         this.ctx = new Ctor();
         this.master = this.ctx.createGain();
-        this.master.gain.value = BALANCE.sound.masterVolume;
+        this.master.gain.value = this.enabled ? BALANCE.sound.masterVolume : 0;
         this.master.connect(this.ctx.destination);
       }
       if (this.ctx.state === 'suspended') {

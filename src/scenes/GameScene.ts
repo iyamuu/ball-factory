@@ -454,6 +454,7 @@ export class GameScene extends Phaser.Scene {
   private endRound(): void {
     this.ended = true;
     this.panel.hide();
+    this.pendingGainPopup = 0;
     const score = Math.floor(this.sim.score);
     const previousBest = loadBest();
     // Same condition as the NEW BEST label on the result screen, so a first-ever best gets the fanfare too.
@@ -614,7 +615,7 @@ export class GameScene extends Phaser.Scene {
     this.speakerGfx = this.add.graphics();
     const hit = this.add.zone(0, 0, 72, 72).setInteractive({ useHandCursor: true });
     hit.on('pointerdown', () => {
-      this.sfx.enabled = !this.sfx.enabled;
+      this.sfx.setEnabled(!this.sfx.enabled);
       saveSoundEnabled(this.sfx.enabled);
       this.drawSpeaker();
     });
@@ -673,7 +674,8 @@ export class GameScene extends Phaser.Scene {
 
   /** One fixed lane to the right of the rate text; lifetime matches the interval so popups do not stack. */
   private flushGainPopup(): void {
-    if (this.pendingGainPopup <= 0) return;
+    // After the round ends only the ending cue plays; a popup that fell on the last step is dropped.
+    if (this.pendingGainPopup <= 0 || this.ended) return;
     spawnPopup(this, WIDTH / 2 + 230, 215, `+${this.pendingGainPopup}`, false, FEVER_POPUP[this.feverStage]);
     this.sfx.gain(this.pendingGainPopup, this.feverStage);
     this.pendingGainPopup = 0;
