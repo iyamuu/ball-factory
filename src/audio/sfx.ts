@@ -11,6 +11,9 @@ export type SfxName = 'gain' | 'pick' | 'offer' | 'accel' | 'extend' | 'best' | 
 
 type Wave = OscillatorType;
 
+/** A sound requested before the context ran is still played if the context starts within this time. */
+const PENDING_MAX_MS = 400;
+
 interface Note {
   /** Start frequency in Hz. */
   freq: number;
@@ -29,7 +32,9 @@ export class Sfx {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
   private lastGainAt = -1;
-  /** Times each effect was requested, whether or not it could play (for tests). */
+  /** Notes requested while the context was still suspended, replayed once it runs (first tap on touch). */
+  private pending: { notes: Note[]; at: number } | null = null;
+  /** Times each effect was requested (for tests). `gain` counts only requests that passed its rate limit. */
   readonly counts: Record<SfxName, number> = {
     gain: 0,
     pick: 0,
@@ -47,16 +52,20 @@ export class Sfx {
   constructor(public enabled: boolean) {}
 
   /**
-   * Unlocks on the first gesture at the DOM level, in the capture phase, so the context exists
-   * before any game-object handler (a card tap, a button) asks for its sound. Bound once.
+   * Unlocks at the DOM level, in the capture phase, so the context exists before any game-object
+   * handler (a card tap, a button) asks for its sound. Browsers count only some events as user
+   * activation: mouse down and key down, but for touch only the pointer up / touch end / click.
+   * All of them are bound, so a touch tap creates the context on the way down and resumes it on
+   * the way up; a sound requested in between is replayed as soon as the context runs. Bound once.
    */
-  bindUnlock(target: EventTarget): void {
+  bindUnlock(canvas: EventTarget): void {
     if (this.bound) return;
     this.bound = true;
     const unlock = (): void => this.unlock();
-    for (const type of ['pointerdown', 'touchstart', 'mousedown', 'keydown']) {
-      target.addEventListener(type, unlock, { capture: true, passive: true });
+    for (const type of ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'mousedown', 'click']) {
+      canvas.addEventListener(type, unlock, { capture: true, passive: true });
     }
+    window.addEventListener('keydown', unlock, { capture: true, passive: true });
   }
 
   /** Creates or resumes the audio context. Call from a user gesture. */
@@ -70,10 +79,19 @@ export class Sfx {
         this.master.gain.value = BALANCE.sound.masterVolume;
         this.master.connect(this.ctx.destination);
       }
-      if (this.ctx.state === 'suspended') void this.ctx.resume().catch(() => undefined);
+      if (this.ctx.state === 'suspended') {
+        void this.ctx.resume().then(() => this.flushPending()).catch(() => undefined);
+      }
     } catch {
       this.ctx = null;
     }
+  }
+
+  /** Plays the notes requested while the context was suspended, if they are still fresh. */
+  private flushPending(): void {
+    const p = this.pending;
+    this.pending = null;
+    if (p && performance.now() - p.at < PENDING_MAX_MS) this.play(p.notes);
   }
 
   /**
@@ -166,10 +184,13 @@ export class Sfx {
 
   private play(notes: Note[]): void {
     if (!this.enabled || !this.ctx || !this.master) return;
+    if (this.ctx.state !== 'running') {
+      // Nothing is scheduled on a suspended context (its clock does not advance, so nodes would
+      // pile up). Keep only the latest request and replay it when the gesture completes.
+      this.pending = { notes, at: performance.now() };
+      return;
+    }
     try {
-      // A context created in this same gesture may still be resuming: notes scheduled now play
-      // as soon as it runs, so do not drop them.
-      if (this.ctx.state === 'suspended') void this.ctx.resume().catch(() => undefined);
       const t0 = this.ctx.currentTime;
       for (const n of notes) {
         const osc = this.ctx.createOscillator();

@@ -182,10 +182,9 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setBackgroundColor(FEVER_BACKGROUND[0]);
     // The Sfx object outlives scene restarts so the unlocked audio context is kept.
     this.sfx ??= new Sfx(RUNTIME.sound ?? loadSoundEnabled() ?? BALANCE.sound.enabled);
-    // Browsers allow audio only after a user gesture. The capture-phase DOM listener runs before
+    // Browsers allow audio only after a user gesture. The capture-phase DOM listeners run before
     // Phaser dispatches the same event to a card or button, so the first tap's sound plays too.
     this.sfx.bindUnlock(this.game.canvas);
-    this.input.on('pointerdown', () => this.sfx.unlock());
     this.fxRng = new Rng((Date.now() & 0xffffffff) >>> 0);
     this.machineNodes = [];
     this.machineXs = [];
@@ -259,12 +258,14 @@ export class GameScene extends Phaser.Scene {
 
   private runSimStep(): void {
     const res = this.sim.step();
+    // scoreRate runs the line once; compute it a single time per step for the peak and the fever check.
+    const rate = this.sim.scoreRate;
     this.popupGain += res.gained;
     // Popups are paced in wall-clock time so their fixed lifetime still keeps them from stacking.
     this.popupAcc += this.sim.stepSec / this.speed;
     const key = String(this.speed);
     this.speedSec[key] = (this.speedSec[key] ?? 0) + this.sim.stepSec;
-    this.peakRate = Math.max(this.peakRate, this.sim.scoreRate);
+    this.peakRate = Math.max(this.peakRate, rate);
 
     if (res.boostStarted) {
       this.flashBoost();
@@ -277,7 +278,7 @@ export class GameScene extends Phaser.Scene {
       this.bestPassed = true;
       this.showBestPassed();
     }
-    this.checkFever();
+    this.checkFever(rate);
 
     if (this.popupAcc >= BALANCE.visuals.popupIntervalSec) {
       this.popupAcc = 0;
@@ -347,14 +348,14 @@ export class GameScene extends Phaser.Scene {
       }
     }
     if (afterRate >= beforeRate * 1.5) this.shake(1);
-    this.checkFever();
+    this.checkFever(afterRate);
   }
 
   /** Raises the fever stage when the score rate passes the next threshold. Never lowers it. */
-  private checkFever(): void {
+  private checkFever(rate: number): void {
     const thresholds = BALANCE.fever.thresholds;
     let stage = this.feverStage;
-    while (stage < thresholds.length && this.sim.scoreRate >= thresholds[stage]) stage += 1;
+    while (stage < thresholds.length && rate >= thresholds[stage]) stage += 1;
     if (stage === this.feverStage) return;
     this.feverStage = stage;
     this.sfx.fever(stage);

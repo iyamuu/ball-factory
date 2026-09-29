@@ -72,7 +72,12 @@ export class ResultScene extends Phaser.Scene {
       .setPadding(12, 10, 12, 10);
     copy.setInteractive({ useHandCursor: true });
     copy.on('pointerdown', () => {
-      void this.copyLog().then((ok) => copy.setText(ok ? 'COPIED' : 'COPY FAILED'));
+      void this.copyLog()
+        .then((ok) => {
+          // The player may have left the scene (RETRY) before the clipboard call settled.
+          if (copy.active) copy.setText(ok ? 'COPIED' : 'COPY FAILED');
+        })
+        .catch(() => undefined);
     });
   }
 
