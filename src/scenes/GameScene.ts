@@ -677,7 +677,8 @@ export class GameScene extends Phaser.Scene {
   /** One fixed lane to the right of the rate text; lifetime matches the interval so popups do not stack. */
   private flushGainPopup(): void {
     // After the round ends only the ending cue plays; a popup that fell on the last step is dropped.
-    if (this.pendingGainPopup <= 0 || this.ended) return;
+    // While an offer is open only its cue plays; a popup that fell on the same step waits for the pick.
+    if (this.pendingGainPopup <= 0 || this.ended || this.paused) return;
     spawnPopup(this, WIDTH / 2 + 230, 215, `+${this.pendingGainPopup}`, false, FEVER_POPUP[this.feverStage]);
     this.sfx.gain(this.pendingGainPopup, this.feverStage);
     this.pendingGainPopup = 0;
