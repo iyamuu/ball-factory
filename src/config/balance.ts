@@ -215,9 +215,30 @@ export const BALANCE = {
     intensity: 0.004,
   },
 
+  sound: {
+    /** Default for a player who has not toggled the speaker button. All sounds are synthesised (src/audio/sfx.ts). */
+    enabled: true,
+    /** Master volume, 0..1. */
+    masterVolume: 0.5,
+    /** Shortest gap between two plays of the same frequent effect, so dense streams do not buzz. */
+    minGapSec: {
+      tick: 0.06,
+      press: 0.09,
+    },
+  },
+
+  feedback: {
+    /** The "/s" readout counts up from the old to the new value after a pick, over this long. */
+    rateCountUpMs: 600,
+    /** Multiplier shown in the centre after a pick ("x3"), lifetime. */
+    multiplierPopupMs: 900,
+  },
+
   storage: {
     key: 'ball-factory.v1',
     /** Last speed picked with the speed button. Kept apart from the best score. */
     speedKey: 'ball-factory.speed.v1',
+    /** Speaker button state ("1" or "0"). */
+    soundKey: 'ball-factory.sound.v1',
   },
 } as const;

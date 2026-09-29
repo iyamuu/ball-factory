@@ -3,8 +3,9 @@ import { BALANCE, type MachineDef, type MachineId } from '../config/balance';
 import { generateOffers, type Offer } from '../game/cards';
 import { Rng } from '../game/rng';
 import { Simulation } from '../game/simulation';
-import { loadBest, loadSpeed, saveBest, saveSpeed } from '../game/storage';
-import { WIDTH } from '../main';
+import { loadBest, loadSoundEnabled, loadSpeed, saveBest, saveSoundEnabled, saveSpeed } from '../game/storage';
+import { Sfx, type SfxName } from '../audio/sfx';
+import { WIDTH, HEIGHT } from '../main';
 import { RUNTIME, randomSeed } from '../runtime';
 import { CardPanel } from '../ui/CardPanel';
 import { drawMachineIcon, FONT } from '../ui/icons';
@@ -78,6 +79,9 @@ interface DebugHook {
   retry: () => void;
   speed: () => number;
   setSpeed: (speed: number) => void;
+  /** Times each sound effect was requested this round (played or not). */
+  sounds: () => Record<SfxName, number>;
+  soundEnabled: () => boolean;
 }
 
 /** Offset of the restart button from the top-right corner, clear of the timer and score. */
@@ -109,6 +113,13 @@ export class GameScene extends Phaser.Scene {
   /** Sim-time played at each speed, for telemetry. */
   private speedSec: Record<string, number> = {};
   private speedText!: Phaser.GameObjects.Text;
+  private sfx!: Sfx;
+  private speakerGfx!: Phaser.GameObjects.Graphics;
+  /** Best score before this round; passing it mid-round triggers the BEST effect once. */
+  private previousBest = 0;
+  private bestPassed = false;
+  /** "/s" readout while it counts up after a pick; null shows the live value. */
+  private rateDisplay: { value: number } | null = null;
 
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
@@ -151,6 +162,13 @@ export class GameScene extends Phaser.Scene {
     this.offerLog = [];
     this.speed = pickedSpeed ?? RUNTIME.speed ?? loadSpeed() ?? BALANCE.playback.defaultSpeed;
     this.speedSec = {};
+    this.previousBest = loadBest();
+    this.bestPassed = false;
+    this.rateDisplay = null;
+    // The Sfx object outlives scene restarts so the unlocked audio context is kept.
+    this.sfx ??= new Sfx(RUNTIME.sound ?? loadSoundEnabled() ?? BALANCE.sound.enabled);
+    // Browsers allow audio only after a user gesture: unlock on any pointer down on the canvas.
+    this.input.on('pointerdown', () => this.sfx.unlock());
     this.fxRng = new Rng((Date.now() & 0xffffffff) >>> 0);
     this.machineNodes = [];
     this.machineXs = [];
@@ -161,6 +179,7 @@ export class GameScene extends Phaser.Scene {
     this.panel = new CardPanel(this);
     this.buildRetryButton();
     this.buildSpeedButton();
+    this.buildSpeakerButton();
     this.layoutMachines();
     this.refreshTexts();
     this.refreshSource();
@@ -178,6 +197,8 @@ export class GameScene extends Phaser.Scene {
       retry: () => this.retry(),
       speed: () => this.speed,
       setSpeed: (speed) => this.setSpeed(speed),
+      sounds: () => ({ ...this.sfx.counts }),
+      soundEnabled: () => this.sfx.enabled,
     };
     (window as unknown as { __bf: DebugHook }).__bf = hook;
   }
@@ -230,6 +251,12 @@ export class GameScene extends Phaser.Scene {
     if (res.boostStarted) {
       this.flashBoost();
       this.shake(0.5);
+      this.sfx.accel();
+    }
+
+    if (!this.bestPassed && this.previousBest > 0 && this.sim.score > this.previousBest) {
+      this.bestPassed = true;
+      this.showBestPassed();
     }
 
     if (this.popupAcc >= BALANCE.visuals.popupIntervalSec) {
@@ -283,22 +310,91 @@ export class GameScene extends Phaser.Scene {
 
     const afterRate = this.sim.scoreRate;
     this.peakRate = Math.max(this.peakRate, afterRate);
-    // Show what the pick did to the rate, e.g. "12.0 -> 24.0 /s". A machine whose effect is
-    // deferred (ACCEL changes nothing until it triggers) shows its description instead.
+    // Show what the pick did: the multiplier in the centre while the "/s" readout counts up to
+    // the new value. A machine whose effect is deferred (ACCEL changes nothing until it
+    // triggers) shows its description instead; time added lives at the timer.
     if (this.sim.remainingSec !== beforeRemaining) {
-      // Time was added: the effect lives at the timer, not in the centre.
       this.showTimeGain(this.sim.remainingSec - beforeRemaining);
+      this.sfx.extend();
     } else {
-      const message =
-        afterRate !== beforeRate ? `${beforeRate.toFixed(1)} → ${afterRate.toFixed(1)} /s` : def.desc;
-      spawnPopup(this, WIDTH / 2, 300, message, true);
+      this.sfx.pick();
+      if (afterRate > beforeRate) {
+        this.showMultiplier(afterRate / beforeRate, def.color);
+        this.countUpRate(beforeRate, afterRate);
+      } else {
+        spawnPopup(this, WIDTH / 2, 300, def.desc, true);
+      }
     }
     if (afterRate >= beforeRate * 1.5) this.shake(1);
+  }
+
+  /** Big "x3" in the card colour: punches in, then rises and fades. */
+  private showMultiplier(ratio: number, color: number): void {
+    const label = `x${Number.isInteger(ratio) ? ratio : ratio.toFixed(1)}`;
+    const t = this.add
+      .text(WIDTH / 2, 300, label, {
+        fontFamily: FONT,
+        fontSize: '96px',
+        color: Phaser.Display.Color.IntegerToColor(color).rgba,
+        fontStyle: 'bold',
+      })
+      .setOrigin(0.5)
+      .setDepth(50)
+      .setScale(0.4);
+    this.tweens.add({ targets: t, scale: 1, duration: 180, ease: 'Back.Out' });
+    this.tweens.add({
+      targets: t,
+      y: 240,
+      alpha: 0,
+      delay: 250,
+      duration: BALANCE.feedback.multiplierPopupMs - 250,
+      ease: 'Cubic.In',
+      onComplete: () => t.destroy(),
+    });
+  }
+
+  /** The "/s" readout rolls from the old to the new value instead of jumping. */
+  private countUpRate(from: number, to: number): void {
+    const display = { value: from };
+    this.rateDisplay = display;
+    this.rateText.setColor('#ffd54f');
+    this.tweens.add({
+      targets: display,
+      value: to,
+      duration: BALANCE.feedback.rateCountUpMs,
+      ease: 'Cubic.Out',
+      onComplete: () => {
+        if (this.rateDisplay === display) this.rateDisplay = null;
+        this.rateText.setColor('#9fb3c8');
+      },
+    });
+  }
+
+  /** Score just passed the previous best: "BEST" beside the score, score flashes, arpeggio. */
+  private showBestPassed(): void {
+    this.sfx.best();
+    const t = this.add
+      .text(WIDTH / 2 + 200, 110, 'BEST', { fontFamily: FONT, fontSize: '40px', color: '#ffd54f', fontStyle: 'bold' })
+      .setOrigin(0, 0.5)
+      .setDepth(50)
+      .setScale(0.4);
+    this.tweens.add({ targets: t, scale: 1, duration: 200, ease: 'Back.Out' });
+    this.tweens.add({ targets: t, alpha: 0, delay: 1400, duration: 600, onComplete: () => t.destroy() });
+    this.scoreText.setColor('#ffd54f');
+    this.tweens.add({
+      targets: this.scoreText,
+      scale: 1.15,
+      duration: 160,
+      yoyo: true,
+      ease: 'Quad.Out',
+      onComplete: () => this.scoreText.setColor('#ffffff'),
+    });
   }
 
   private endRound(): void {
     this.ended = true;
     this.panel.hide();
+    this.sfx.end();
     const score = Math.floor(this.sim.score);
     const previousBest = loadBest();
     const saved = score > previousBest ? saveBest(score) : true;
@@ -443,7 +539,45 @@ export class GameScene extends Phaser.Scene {
   private refreshTexts(): void {
     this.timerText.setText(String(Math.ceil(this.sim.remainingSec)));
     this.scoreText.setText(Math.floor(this.sim.score).toLocaleString('en-US'));
-    this.rateText.setText(`${this.sim.scoreRate.toFixed(1)} /s`);
+    const rate = this.rateDisplay ? this.rateDisplay.value : this.sim.scoreRate;
+    this.rateText.setText(`${rate.toFixed(1)} /s`);
+  }
+
+  /** Speaker in the bottom-right corner; a tap toggles all sound. */
+  private buildSpeakerButton(): void {
+    const c = this.add.container(WIDTH - 44, HEIGHT - 44).setDepth(200);
+    this.speakerGfx = this.add.graphics();
+    const hit = this.add.zone(0, 0, 72, 72).setInteractive({ useHandCursor: true });
+    hit.on('pointerdown', () => {
+      this.sfx.enabled = !this.sfx.enabled;
+      saveSoundEnabled(this.sfx.enabled);
+      this.drawSpeaker();
+    });
+    c.add([this.speakerGfx, hit]);
+    this.drawSpeaker();
+  }
+
+  private drawSpeaker(): void {
+    const g = this.speakerGfx;
+    const on = this.sfx.enabled;
+    const color = on ? 0x9fb3c8 : 0x5f6f80;
+    g.clear();
+    g.fillStyle(color, 1);
+    g.fillRect(-14, -6, 8, 12);
+    g.fillTriangle(-6, -8, 6, -16, 6, 16);
+    g.fillTriangle(-6, -8, 6, 16, -6, 8);
+    g.lineStyle(3, color, 1);
+    if (on) {
+      g.beginPath();
+      g.arc(6, 0, 10, Phaser.Math.DegToRad(-40), Phaser.Math.DegToRad(40), false);
+      g.strokePath();
+      g.beginPath();
+      g.arc(6, 0, 16, Phaser.Math.DegToRad(-40), Phaser.Math.DegToRad(40), false);
+      g.strokePath();
+    } else {
+      g.lineStyle(3, 0xef5350, 1);
+      g.lineBetween(-16, -16, 20, 16);
+    }
   }
 
   private refreshSource(): void {
@@ -594,12 +728,14 @@ export class GameScene extends Phaser.Scene {
           // so a second press on an already processed ball is visible.
           b.pressed += 1;
           this.applyPressedStyle(b);
+          this.sfx.press();
         }
       }
 
       if (b.shape.x >= BIN_X - 20) {
         b.active = false;
         b.shape.setVisible(false);
+        this.sfx.tick(b.pressed);
       }
     }
   }
