@@ -4,9 +4,10 @@ import { BALANCE } from '../config/balance';
  * Synthesised sound effects (no audio assets). Everything is generated with the Web Audio API
  * from oscillators and gain envelopes. The context is created on the first pointer event, which
  * browsers require before sound can play. Every call is guarded: a missing or failing audio
- * context must never affect the game.
+ * context must never affect the game. Nothing here is tied to the number of balls: the frequent
+ * effects are paced by the caller in wall-clock time and rate-limited again here.
  */
-export type SfxName = 'tick' | 'press' | 'pick' | 'accel' | 'extend' | 'best' | 'end';
+export type SfxName = 'gain' | 'pick' | 'offer' | 'accel' | 'extend' | 'best' | 'fever' | 'end' | 'fanfare';
 
 type Wave = OscillatorType;
 
@@ -27,9 +28,19 @@ interface Note {
 export class Sfx {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
-  private lastAt: Partial<Record<SfxName, number>> = {};
+  private lastGainAt = -1;
   /** Times each effect was requested, whether or not it could play (for tests). */
-  readonly counts: Record<SfxName, number> = { tick: 0, press: 0, pick: 0, accel: 0, extend: 0, best: 0, end: 0 };
+  readonly counts: Record<SfxName, number> = {
+    gain: 0,
+    pick: 0,
+    offer: 0,
+    accel: 0,
+    extend: 0,
+    best: 0,
+    fever: 0,
+    end: 0,
+    fanfare: 0,
+  };
 
   constructor(public enabled: boolean) {}
 
@@ -50,26 +61,37 @@ export class Sfx {
     }
   }
 
-  /** A ball dropping into the bin. Pitch rises with how many presses it went through. */
-  tick(pressedLevel: number): void {
-    if (!this.throttle('tick', BALANCE.sound.minGapSec.tick)) return;
-    const freq = 880 * Math.pow(1.25, Math.min(pressedLevel, 4));
-    this.play([{ freq, to: freq * 0.9, dur: 0.05, wave: 'sine', gain: 0.25 }]);
+  /**
+   * A "+N" popup: a small coin sound. Pitch rises with the number of digits of N and with the
+   * fever stage, so a rich stream sounds brighter. Rate-limited in wall-clock time.
+   */
+  gain(amount: number, feverStage: number): void {
+    const now = performance.now() / 1000;
+    if (now - this.lastGainAt < BALANCE.sound.minGainGapSec) return;
+    this.lastGainAt = now;
+    this.count('gain');
+    const digits = Math.max(1, Math.floor(Math.log10(Math.max(1, amount))) + 1);
+    const freq = 660 * Math.pow(1.19, digits - 1 + feverStage);
+    this.play([{ freq, to: freq * 1.5, dur: 0.06, wave: 'sine', gain: 0.22 }]);
   }
 
-  /** A press processing a ball: short low thud. */
-  press(): void {
-    if (!this.throttle('press', BALANCE.sound.minGapSec.press)) return;
-    this.play([{ freq: 160, to: 90, dur: 0.08, wave: 'triangle', gain: 0.35 }]);
-  }
-
-  /** Card picked: two rising notes. */
-  pick(): void {
+  /** Card picked. `ratio` is the rate after / before: a bigger jump is higher and thicker. */
+  pick(ratio: number): void {
     this.count('pick');
-    this.play([
-      { freq: 523, dur: 0.08, wave: 'square', gain: 0.18 },
-      { freq: 784, dur: 0.12, at: 0.08, wave: 'square', gain: 0.18 },
-    ]);
+    const lift = Math.pow(1.12, Math.max(0, Math.min(4, Math.log2(Math.max(1, ratio)) * 2)));
+    const notes: Note[] = [
+      { freq: 523 * lift, dur: 0.08, wave: 'square', gain: 0.18 },
+      { freq: 784 * lift, dur: 0.14, at: 0.08, wave: 'square', gain: 0.18 },
+    ];
+    // A third, fifth-above note for a jump of x2 or more.
+    if (ratio >= 2) notes.push({ freq: 1175 * lift, dur: 0.16, at: 0.16, wave: 'triangle', gain: 0.16 });
+    this.play(notes);
+  }
+
+  /** Offer opened: short notification. */
+  offer(): void {
+    this.count('offer');
+    this.play([{ freq: 880, dur: 0.05, wave: 'sine', gain: 0.2 }, { freq: 1175, dur: 0.08, at: 0.06, wave: 'sine', gain: 0.2 }]);
   }
 
   /** Accelerator boost starting: upward sweep. */
@@ -78,22 +100,32 @@ export class Sfx {
     this.play([{ freq: 300, to: 1000, dur: 0.28, wave: 'sawtooth', gain: 0.16 }]);
   }
 
-  /** Time added: bright chime. */
+  /** Time added: bell-like chime. */
   extend(): void {
     this.count('extend');
     this.play([
       { freq: 660, dur: 0.1, wave: 'sine', gain: 0.3 },
       { freq: 880, dur: 0.1, at: 0.09, wave: 'sine', gain: 0.3 },
-      { freq: 1320, dur: 0.22, at: 0.18, wave: 'sine', gain: 0.3 },
+      { freq: 1320, dur: 0.3, at: 0.18, wave: 'sine', gain: 0.3 },
     ]);
   }
 
   /** Passing the previous best mid-round: quick arpeggio. */
   best(): void {
     this.count('best');
-    this.play(
-      [523, 659, 784, 1047].map((freq, i) => ({ freq, dur: 0.14, at: i * 0.07, wave: 'square' as Wave, gain: 0.2 })),
-    );
+    this.play([523, 659, 784, 1047].map((freq, i) => ({ freq, dur: 0.14, at: i * 0.07, wave: 'square' as Wave, gain: 0.2 })));
+  }
+
+  /** Fever stage up: rising sweep plus a chord, higher for each stage. */
+  fever(stage: number): void {
+    this.count('fever');
+    const base = 262 * Math.pow(1.5, stage - 1);
+    this.play([
+      { freq: base, to: base * 4, dur: 0.35, wave: 'sawtooth', gain: 0.14 },
+      { freq: base * 2, dur: 0.5, at: 0.3, wave: 'triangle', gain: 0.22 },
+      { freq: base * 2.5, dur: 0.5, at: 0.3, wave: 'triangle', gain: 0.18 },
+      { freq: base * 3, dur: 0.5, at: 0.3, wave: 'triangle', gain: 0.18 },
+    ]);
   }
 
   /** Round over: three-note close. */
@@ -106,17 +138,15 @@ export class Sfx {
     ]);
   }
 
-  private count(name: SfxName): void {
-    this.counts[name] += 1;
+  /** Round over with a new best: fanfare. */
+  fanfare(): void {
+    this.count('fanfare');
+    const seq = [523, 523, 523, 659, 784, 1047];
+    this.play(seq.map((freq, i) => ({ freq, dur: i === 5 ? 0.6 : 0.12, at: i * 0.12, wave: 'square' as Wave, gain: 0.2 })));
   }
 
-  /** Rate limit for effects that can fire many times per second; counts only the ones that pass. */
-  private throttle(name: SfxName, minGapSec: number): boolean {
-    const now = performance.now() / 1000;
-    if (now - (this.lastAt[name] ?? -1) < minGapSec) return false;
-    this.lastAt[name] = now;
-    this.count(name);
-    return true;
+  private count(name: SfxName): void {
+    this.counts[name] += 1;
   }
 
   private play(notes: Note[]): void {

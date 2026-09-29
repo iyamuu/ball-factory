@@ -43,6 +43,10 @@ export interface RoundRecord {
   speed: number;
   /** Sim-time played at each speed, keyed by the speed ("1", "1.5"). Shows switching during a round. */
   speedSec: Record<string, number>;
+  /** Speaker button state when the record was made. */
+  muted: boolean;
+  /** Highest fever stage reached (0..3). */
+  fever: number;
 }
 
 /** Hosts a ?telemetry=<url> override may point at: the tester's own machine, never a third party. */

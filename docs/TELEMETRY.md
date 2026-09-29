@@ -18,6 +18,7 @@
 | `durationSec`, `roundLengthSec` | 設定の長さと、EXTEND 込みの実際の長さ |
 | `abandoned`, `playedSec` | 途中でリトライしたか（true なら記録はそこまでの分）と、遊んだ秒数 |
 | `speed`, `speedSec` | 記録時点の倍速と、倍速ごとに遊んだゲーム内の秒数（例: `{"1": 12.5, "1.5": 57.5}`）。ラウンド途中の切り替えが分かる |
+| `muted`, `fever` | 記録時点の消音状態と、到達したフィーバー段階（0〜3） |
 | `build` | デプロイしたコミットの SHA |
 | `screen` | 画面幅・高さ・DPR・タッチの有無 |
 | `time` | 終了時刻（ISO） |

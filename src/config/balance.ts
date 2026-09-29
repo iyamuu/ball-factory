@@ -220,11 +220,19 @@ export const BALANCE = {
     enabled: true,
     /** Master volume, 0..1. */
     masterVolume: 0.5,
-    /** Shortest gap between two plays of the same frequent effect, so dense streams do not buzz. */
-    minGapSec: {
-      tick: 0.06,
-      press: 0.09,
-    },
+    /** Shortest wall-clock gap between two "+N" coin sounds (they are also paced by popupIntervalSec). */
+    minGainGapSec: 0.2,
+  },
+
+  fever: {
+    /**
+     * Score rate (/s) at which fever stage 1, 2 and 3 start. The stage never drops within a round.
+     * Chosen from `npm run balance -- --rates` on 20 seeds (docs/DESIGN.md): 30 is reached by half
+     * of random-pick rounds around 45 s and by the simple rule at 35 s; 150 by the simple rule at
+     * 50 s and by half of random rounds only at the end; 1000 by fewer than 10% of random rounds
+     * and by three quarters of optimal rounds in the last seconds.
+     */
+    thresholds: [30, 150, 1000],
   },
 
   feedback: {
