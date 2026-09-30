@@ -8,6 +8,7 @@ import { BALANCE } from './config/balance';
  *   ?telemetry=0 (or =<localhost url>)  disable or redirect round telemetry (src/telemetry.ts)
  *   ?speed=1.5 start at this playback speed (one of BALANCE.playback.speeds) instead of the saved one
  *   ?sound=0   start muted regardless of the saved speaker state
+ *   ?autostart=1  skip the TAP screen before the first round (tests)
  */
 const params = new URLSearchParams(window.location.search);
 
@@ -27,6 +28,8 @@ export const RUNTIME = {
   speed: offeredSpeed(num('speed')),
   /** false when ?sound=0 is given; undefined otherwise (use the saved state, then the default). */
   sound: params.get('sound') === '0' ? false : undefined,
+  /** true skips the TAP screen shown before the first round of a page load. */
+  autostart: params.get('autostart') === '1',
 };
 
 function offeredSpeed(speed: number | undefined): number | undefined {

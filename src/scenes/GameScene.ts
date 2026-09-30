@@ -77,6 +77,10 @@ interface DebugHook {
   offers: () => MachineId[][];
   seed: () => number;
   retry: () => void;
+  /** True while the TAP screen before the first round is showing. */
+  waiting: () => boolean;
+  /** Starts the round from the TAP screen (same as tapping it). */
+  start: () => void;
   speed: () => number;
   setSpeed: (speed: number) => void;
   /** Times each sound effect was requested this round (played or not). */
@@ -104,6 +108,12 @@ const SPEAKER_GAP = 96;
  * keeps the player's pick even when the URL has ?speed= or storage is unavailable.
  */
 let pickedSpeed: number | undefined;
+/**
+ * The first round of a page load waits for a tap: browsers allow sound only after a user gesture,
+ * and the player gets to start when ready. Later rounds (retry, RETRY on the result screen) start
+ * at once, as the gesture has already happened.
+ */
+let needsStartTap = true;
 
 export class GameScene extends Phaser.Scene {
   private sim!: Simulation;
@@ -133,6 +143,9 @@ export class GameScene extends Phaser.Scene {
   private rateDisplay: { value: number } | null = null;
   /** Fever stage, 0..thresholds.length. Only ever rises within a round. */
   private feverStage = 0;
+  /** True while the TAP screen is up: nothing advances until the first tap. */
+  private waitingForStart = false;
+  private startOverlay: Phaser.GameObjects.Container | null = null;
 
   private timerText!: Phaser.GameObjects.Text;
   private scoreText!: Phaser.GameObjects.Text;
@@ -198,6 +211,9 @@ export class GameScene extends Phaser.Scene {
     this.buildRetryButton();
     this.buildSpeedButton();
     this.buildSpeakerButton();
+    this.waitingForStart = needsStartTap && !RUNTIME.autostart;
+    if (this.waitingForStart) this.buildStartOverlay();
+    else needsStartTap = false;
     this.layoutMachines();
     this.refreshTexts();
     this.refreshSource();
@@ -213,6 +229,8 @@ export class GameScene extends Phaser.Scene {
       offers: () => this.offers.map((o) => o.cards.map((c) => c.id)),
       seed: () => this.seed,
       retry: () => this.retry(),
+      waiting: () => this.waitingForStart,
+      start: () => this.startRound(),
       speed: () => this.speed,
       setSpeed: (speed) => this.setSpeed(speed),
       sounds: () => ({ ...this.sfx.counts }),
@@ -223,7 +241,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   update(_time: number, deltaMs: number): void {
-    if (this.ended || this.paused) return;
+    if (this.waitingForStart || this.ended || this.paused) return;
 
     // The first delta after create() includes scene construction time; do not count it as play time.
     if (this.skipNextDelta) {
@@ -545,6 +563,29 @@ export class GameScene extends Phaser.Scene {
 
     // Bin
     this.add.rectangle(BIN_X, LINE_Y, 60, 90, 0x2b3642, 1).setStrokeStyle(4, 0x9fb3c8, 1);
+  }
+
+  /** Full-screen TAP prompt above every button; the first tap unlocks audio and starts the round. */
+  private buildStartOverlay(): void {
+    const c = this.add.container(0, 0).setDepth(300);
+    const dim = this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x000000, 0.55).setInteractive();
+    const label = this.add
+      .text(WIDTH / 2, HEIGHT / 2, 'TAP', { fontFamily: FONT, fontSize: '96px', color: '#ffffff', fontStyle: 'bold' })
+      .setOrigin(0.5);
+    this.tweens.add({ targets: label, scale: 1.08, duration: 700, yoyo: true, repeat: -1, ease: 'Sine.InOut' });
+    dim.on('pointerdown', () => this.startRound());
+    c.add([dim, label]);
+    this.startOverlay = c;
+  }
+
+  private startRound(): void {
+    if (!this.waitingForStart) return;
+    this.waitingForStart = false;
+    needsStartTap = false;
+    this.startOverlay?.destroy();
+    this.startOverlay = null;
+    // The frame after the tap carries the wait; play time starts from the next one.
+    this.skipNextDelta = true;
   }
 
   /** Circular arrow in the top-right corner, above the card panel so it works during an offer. */
