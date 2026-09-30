@@ -9,5 +9,5 @@
     "rootDir": "../..",
     "outDir": "./dist"
   },
-  "files": ["./main.ts", "../../src/config/balance.ts", "../../src/game/simulation.ts", "../../src/game/cards.ts", "../../src/game/rng.ts"]
+  "files": ["./main.ts", "../../src/config/balance.ts", "../../src/game/simulation.ts", "../../src/game/cards.ts", "../../src/game/rng.ts", "../../src/game/fever.ts"]
 }

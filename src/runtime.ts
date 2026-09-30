@@ -9,6 +9,7 @@ import { BALANCE } from './config/balance';
  *   ?speed=1.5 start at this playback speed (one of BALANCE.playback.speeds) instead of the saved one
  *   ?sound=0   start muted regardless of the saved speaker state
  *   ?autostart=1  skip the TAP screen before the first round (tests)
+ *   ?fever=0   turn the fever lottery off (colour stages only, as before the lottery)
  */
 const params = new URLSearchParams(window.location.search);
 
@@ -30,6 +31,8 @@ export const RUNTIME = {
   sound: params.get('sound') === '0' ? false : undefined,
   /** true skips the TAP screen shown before the first round of a page load. */
   autostart: params.get('autostart') === '1',
+  /** Fever lottery on (default) or off with ?fever=0. */
+  fever: BALANCE.fever.enabled && params.get('fever') !== '0',
 };
 
 function offeredSpeed(speed: number | undefined): number | undefined {

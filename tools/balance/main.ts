@@ -8,7 +8,8 @@
  *   npm run balance -- --from 21    # seeds 21.. (a hold-out set not used when choosing numbers)
  *   npm run balance -- --variants   # the configured spec plus the variants listed in VARIANTS
  *   npm run balance -- --variant x3.0   # only the variants whose label contains the text
- *   npm run balance -- --rates          # score-rate distributions (random / simple / optimum) for fever thresholds
+ *   npm run balance -- --rates          # score-rate distributions (random / simple / optimum) for heat thresholds
+ *   npm run balance -- --fever          # fever lottery: draws, hits and score added, per kind of player
  *
  * Results are printed as Markdown tables so they can be pasted into docs/DESIGN.md.
  */
@@ -85,15 +86,14 @@ const VARIANTS: Variant[] = [
 
 // ---------------------------------------------------------------- play
 
-/** Score rate trace of one play: the peak and the rate at a few sim times (for fever thresholds). */
+/** Base score rate (without the ACCEL boost) of one play: the peak and the rate at a few sim times (for heat thresholds). */
 interface RateTrace {
   peak: number;
   at: Record<number, number>;
 }
 const TRACE_TIMES = [20, 35, 50, 70];
 
-function play(offers: Offer[], choose: Chooser, trace?: RateTrace): number {
-  const sim = new Simulation(DURATION);
+function play(offers: Offer[], choose: Chooser, trace?: RateTrace, sim = new Simulation(DURATION)): number {
   let k = 0;
   while (!sim.ended) {
     while (k < offers.length && sim.timeSec >= offers[k].atSec && !sim.ended) {
@@ -104,7 +104,7 @@ function play(offers: Offer[], choose: Chooser, trace?: RateTrace): number {
     }
     sim.step();
     if (trace) {
-      const r = sim.scoreRate;
+      const r = sim.baseScoreRate;
       trace.peak = Math.max(trace.peak, r);
       for (const t of TRACE_TIMES) if (Math.abs(sim.timeSec - t) < sim.stepSec / 2) trace.at[t] = r;
     }
@@ -327,7 +327,59 @@ function runRates(): void {
   row('optimum, peak', opt.map((r) => r.peak));
 }
 
-if (args.includes('--rates')) {
+/** --fever: the fever lottery on top of the same pick sequences, over many lottery seeds. */
+function runFever(): void {
+  const LOTTERY_SEEDS = 50;
+  const q = (xs: number[], p: number): number => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))];
+  const groups: Record<string, { bonus: number[]; draws: number[]; hits: number[]; feverSec: number[]; chain: number[] }> = {};
+  const add = (label: string, offers: Offer[], picks: MachineId[]): void => {
+    const g = (groups[label] ??= { bonus: [], draws: [], hits: [], feverSec: [], chain: [] });
+    let k = 0;
+    const base = play(offers, () => picks[k++]);
+    for (let i = 0; i < LOTTERY_SEEDS; i++) {
+      k = 0;
+      const sim = new Simulation(DURATION, { feverSeed: 1000 + i });
+      const score = play(offers, () => picks[k++], undefined, sim);
+      const f = sim.fever!;
+      g.bonus.push(score / base - 1);
+      g.draws.push(f.draws);
+      g.hits.push(f.hits);
+      g.feverSec.push(f.feverSec);
+      g.chain.push(f.longestChain);
+    }
+  };
+  const record = (offers: Offer[], choose: Chooser): MachineId[] => {
+    const picks: MachineId[] = [];
+    play(offers, (sim, cards, allowed) => {
+      const id = choose(sim, cards, allowed);
+      picks.push(id);
+      return id;
+    });
+    return picks;
+  };
+  for (const seed of SEEDS) {
+    const offers = generateOffers(seed, LONGEST);
+    const rng = mulberry32(seed * 7919);
+    for (let i = 0; i < 20; i++) {
+      add('random picks', offers, record(offers, (_sim, cards, allowed) => { const o = cards.filter((_, j) => allowed[j]); return o[Math.floor(rng() * o.length)]; }));
+    }
+    add('simple rule', offers, record(offers, STRATEGIES['P>A>V early, S in the last 20 s']));
+    add('optimum', offers, optimum(offers).picks);
+  }
+  console.log(`\n## fever lottery, ${SEEDS.length} seeds x ${LOTTERY_SEEDS} lottery seeds\n`);
+  console.log('| player | bonus mean | p50 | p95 | max | no hit | draws mean | hits mean | fever s mean | longest chain p95 |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|');
+  for (const [label, g] of Object.entries(groups)) {
+    const noHit = g.hits.filter((h) => h === 0).length / g.hits.length;
+    console.log(
+      `| ${label} | ${pct(mean(g.bonus))} | ${pct(q(g.bonus, 0.5))} | ${pct(q(g.bonus, 0.95))} | ${pct(Math.max(...g.bonus))} | ${pct(noHit)} | ${mean(g.draws).toFixed(1)} | ${mean(g.hits).toFixed(2)} | ${mean(g.feverSec).toFixed(1)} | ${q(g.chain, 0.95)} |`,
+    );
+  }
+}
+
+if (args.includes('--fever')) {
+  runFever();
+} else if (args.includes('--rates')) {
   runRates();
 } else if (RUN_VARIANTS || VARIANT_FILTER) {
   for (const v of VARIANTS) {

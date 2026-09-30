@@ -1,4 +1,5 @@
 import { BALANCE, type MachineId } from '../config/balance';
+import { FeverLottery, type FeverEvent } from './fever';
 
 export interface LineMachine {
   id: MachineId;
@@ -15,6 +16,15 @@ export interface StepResult {
   triggers: number;
   /** True if boost went from inactive to active during this step. */
   boostStarted: boolean;
+  /** Fever lottery events of this step (empty without a lottery). */
+  fever: FeverEvent[];
+}
+
+export interface SimulationOptions {
+  /** Seed for the fever lottery. Omitted: no lottery (the balance brute force runs without one). */
+  feverSeed?: number;
+  /** Keep `rate` and `heatStage` up to date every step (costs up to two extra passes over the line per step). */
+  trackHeat?: boolean;
 }
 
 /** A group of balls that share the same value. A batch is a list of groups. */
@@ -51,9 +61,32 @@ export class Simulation {
   bonusTimeSec = 0;
   /** Base round length; EXTEND adds to it. */
   readonly durationSec: number;
+  /** Fever lottery, or null when it is off. */
+  readonly fever: FeverLottery | null;
+  /** Score added by the FEVER multiplier (included in score). */
+  feverBonus = 0;
+  /** Score rate after the last step or noteRate() call (kept only with trackHeat or a lottery). */
+  rate = 0;
+  /** Heat stage, 0..heat.thresholds.length. Only ever rises within a round. */
+  heatStage = 0;
+  private readonly trackHeat: boolean;
 
-  constructor(durationSec: number = BALANCE.round.durationSec) {
+  constructor(durationSec: number = BALANCE.round.durationSec, options: SimulationOptions = {}) {
     this.durationSec = durationSec;
+    this.fever = options.feverSeed === undefined ? null : new FeverLottery(options.feverSeed);
+    this.trackHeat = options.trackHeat === true || this.fever !== null;
+  }
+
+  /**
+   * Records the score rate (e.g. right after a pick) and raises the heat stage when the rate without the
+   * boost passes a threshold.
+   */
+  noteRate(rate: number): void {
+    this.rate = rate;
+    const t = BALANCE.heat.thresholds;
+    if (this.heatStage >= t.length) return;
+    const base = this.baseScoreRate;
+    while (this.heatStage < t.length && base >= t[this.heatStage]) this.heatStage += 1;
   }
 
   /** Elapsed simulation time. One multiplication, so offer times and the round end compare exactly. */
@@ -108,6 +141,17 @@ export class Simulation {
     const bySpeed = speed.scalesPressBudget ? speed.multiplier ** this.speedCount : 1;
     const byBoost = this.accel.scalesPressBudget ? this.boostMultiplier : 1;
     return bySpeed * byBoost;
+  }
+
+  /**
+   * Score per second the build produces without the ACCEL boost (no state is changed). Heat is judged
+   * on this, so a stage is earned by the line itself, not by a moment of boost.
+   */
+  get baseScoreRate(): number {
+    const speed = BALANCE.machines.speed;
+    const bySpeed = speed.scalesPressBudget ? speed.multiplier ** this.speedCount : 1;
+    const groups = this.runLine([{ count: this.baseRate, value: BALANCE.production.baseValue }], 1, bySpeed, false, false);
+    return groups.reduce((s, g) => s + g.count * g.value, 0);
   }
 
   /** Score per second at the end of the line right now (no state is changed). */
@@ -167,11 +211,18 @@ export class Simulation {
       gained += g.count * g.value;
       count += g.count;
     }
+    // FEVER multiplies what reaches the bin during this step (state from the previous step).
+    const multiplier = this.fever?.multiplier ?? 1;
+    this.feverBonus += gained * (multiplier - 1);
+    gained *= multiplier;
     this.score += gained;
     this.ballsOut += count;
     this.steps += 1;
 
-    return { gained, triggers, boostStarted: !wasActive && this.boostActive };
+    if (this.trackHeat) this.noteRate(this.scoreRate);
+    const fever = this.fever ? this.fever.advance(this.stepSec, this.score, this.heatStage) : [];
+
+    return { gained, triggers, boostStarted: !wasActive && this.boostActive, fever };
   }
 
   /**

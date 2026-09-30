@@ -1,0 +1,516 @@
+import Phaser from 'phaser';
+import { BALANCE } from '../config/balance';
+import { chainMultiplier, type FeverEvent, type FeverLottery, type HoldColor } from '../game/fever';
+import { WIDTH, HEIGHT } from '../main';
+import { FONT } from './icons';
+import { FEVER_BPM } from '../audio/sfx';
+
+/** Hold and reel frame colour per hold colour. */
+export const HOLD_COLORS: Record<HoldColor, number> = {
+  white: 0xe8eef4,
+  blue: 0x4fc3f7,
+  green: 0x81c784,
+  red: 0xef5350,
+  gold: 0xffd54f,
+};
+
+const REEL_Y = 632;
+const DIGIT_W = 76;
+const DIGIT_H = 96;
+const DIGIT_GAP = 12;
+const HOLD_R = 14;
+/** Distance from the left edge of the reel to the nearest hold; holds sit left of the reel. */
+const HOLD_INSET = 48;
+const HOLD_GAP = 40;
+/** Rainbow stops, left to right. Rainbow is reserved for a certain win (gold hold, FEVER). */
+const RAINBOW = ['#ff3b3b', '#ff9f1a', '#ffe81a', '#3bff5a', '#1ad1ff', '#5a5aff', '#d21aff'];
+
+/**
+ * Big extruded rainbow text: a stack of dark-gold copies offset down-right for depth, a thick dark
+ * outline and a flowing rainbow face with a white glow. Call `tick()` every frame to move the rainbow.
+ */
+export class RainbowText extends Phaser.GameObjects.Container {
+  private face: Phaser.GameObjects.Text;
+  private phase = 0;
+
+  constructor(scene: Phaser.Scene, x: number, y: number, text: string, sizePx: number) {
+    super(scene, x, y);
+    scene.add.existing(this);
+    const style = {
+      fontFamily: FONT,
+      fontSize: `${sizePx}px`,
+      fontStyle: 'italic bold',
+      align: 'center',
+    };
+    // The canvas is sized for upright glyphs: pad it for the italic slant, the outline and the glow.
+    const padX = Math.round(sizePx * 0.3);
+    const padY = Math.round(sizePx * 0.2);
+    const layers = Math.max(4, Math.round(sizePx / 18));
+    const step = Math.max(1.5, sizePx / 70);
+    // Back to front: the deepest layer is the darkest, so the block reads as lit from the top left.
+    for (let i = layers; i >= 1; i--) {
+      const shade = Phaser.Display.Color.Interpolate.ColorWithColor(
+        Phaser.Display.Color.ValueToColor(0x6b3d00),
+        Phaser.Display.Color.ValueToColor(0xffc233),
+        layers,
+        layers - i,
+      );
+      const layer = scene.add
+        .text(i * step, i * step, text, { ...style, color: Phaser.Display.Color.RGBToString(shade.r, shade.g, shade.b) })
+        .setOrigin(0.5)
+        .setPadding(padX, padY, padX, padY)
+        .setStroke('#2a1400', sizePx / 9);
+      this.add(layer);
+    }
+    this.face = scene.add
+      .text(0, 0, text, { ...style, color: '#ffffff' })
+      .setOrigin(0.5)
+      .setPadding(padX, padY, padX, padY)
+      .setStroke('#2a1400', sizePx / 9)
+      .setShadow(0, 0, '#ffffff', sizePx / 8, true, false);
+    this.add(this.face);
+    this.paint();
+  }
+
+  /** Moves the rainbow along the face. `dtSec` is wall-clock time. */
+  tick(dtSec: number): void {
+    this.phase = (this.phase + dtSec * 0.8) % 1;
+    this.paint();
+  }
+
+  private paint(): void {
+    const t = this.face;
+    const w = Math.max(1, t.width);
+    // Two copies of the spectrum over twice the width, shifted by the phase: a seamless loop.
+    const g = t.context.createLinearGradient(-this.phase * w, 0, (2 - this.phase) * w, t.height * 0.4);
+    const n = RAINBOW.length;
+    for (let k = 0; k <= 2 * n; k++) g.addColorStop(k / (2 * n), RAINBOW[k % n]);
+    t.setFill(g);
+  }
+}
+
+interface DigitBox {
+  frame: Phaser.GameObjects.Rectangle;
+  text: Phaser.GameObjects.Text;
+}
+
+/**
+ * Presentation of the fever lottery: the row of holds, the three-digit reel with its reach, the
+ * FEVER cut-in (big extruded rainbow text slammed onto the screen) and the FEVER badge that shows
+ * the time left. Holds nothing of its own: every frame it redraws from the lottery state.
+ */
+export class FeverFx {
+  private holdDots: Phaser.GameObjects.Arc[] = [];
+  private digits: DigitBox[] = [];
+  private reachLabel: Phaser.GameObjects.Text;
+  private reachDim: Phaser.GameObjects.Rectangle;
+  private badge: RainbowText | null = null;
+  private badgeInfo: Phaser.GameObjects.Text;
+  private live: RainbowText[] = [];
+  private framePhase = 0;
+  private reel: Phaser.GameObjects.Container;
+  /** Spin offsets per digit so the three do not roll in step. */
+  private spinOffset = [0, 3, 6];
+  /** Rainbow frame around the screen and a colour wash behind the line, both only during FEVER. */
+  private aura: Phaser.GameObjects.Graphics;
+  private wash: Phaser.GameObjects.Rectangle;
+  /** Wall-clock seconds since FEVER started, for the beat pulse (same tempo as the FEVER music). */
+  private beatClock = 0;
+  /**
+   * While the continue draw plays, the chain shown before it. The lottery has already decided, so the
+   * aura and badge keep this value until the result is revealed. null otherwise.
+   */
+  private heldChain: number | null = null;
+  private drawChance = 0;
+
+  constructor(private scene: Phaser.Scene) {
+    this.reachDim = scene.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x000000, 0).setDepth(88);
+    this.wash = scene.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0xffffff, 0).setDepth(-10);
+    this.aura = scene.add.graphics().setDepth(87);
+    this.reel = scene.add.container(0, 0).setDepth(95);
+    // WIDTH comes from main.ts, which imports the scene that imports this file: read it here, not at module load.
+    const holdX0 = WIDTH / 2 - (DIGIT_W * 1.5 + DIGIT_GAP) - HOLD_INSET;
+    for (let i = 0; i < BALANCE.fever.maxHolds; i++) {
+      const dot = scene.add.circle(holdX0 - i * HOLD_GAP, REEL_Y, HOLD_R, 0x000000, 0).setStrokeStyle(2, 0x3a4652, 1);
+      dot.setDepth(95);
+      this.holdDots.push(dot);
+    }
+    for (let i = 0; i < 3; i++) {
+      const x = WIDTH / 2 + (i - 1) * (DIGIT_W + DIGIT_GAP);
+      const frame = scene.add.rectangle(x, REEL_Y, DIGIT_W, DIGIT_H, 0x0b0f13, 1).setStrokeStyle(3, 0x3a4652, 1);
+      const text = scene.add
+        .text(x, REEL_Y, '-', { fontFamily: FONT, fontSize: '64px', color: '#5f6f80', fontStyle: 'bold' })
+        .setOrigin(0.5);
+      this.digits.push({ frame, text });
+      this.reel.add([frame, text]);
+    }
+    this.reachLabel = scene.add
+      .text(WIDTH / 2, REEL_Y - DIGIT_H / 2 - 30, 'REACH', { fontFamily: FONT, fontSize: '40px', color: '#ffd54f', fontStyle: 'italic bold' })
+      .setOrigin(0.5)
+      .setStroke('#2a1400', 6)
+      .setVisible(false);
+    this.reel.add(this.reachLabel);
+    this.badgeInfo = scene.add
+      .text(WIDTH / 2 + 250, REEL_Y, '', { fontFamily: FONT, fontSize: '34px', color: '#ffffff', fontStyle: 'bold' })
+      .setOrigin(0, 0.5)
+      .setStroke('#2a1400', 6)
+      .setDepth(96)
+      .setVisible(false);
+  }
+
+  /** Redraws holds, reel and badge from the lottery. `dtSec` is wall-clock time since the last frame. */
+  update(lottery: FeverLottery, dtSec: number): void {
+    for (const t of this.live) t.tick(dtSec);
+    this.framePhase = (this.framePhase + dtSec) % 1;
+
+    this.holdDots.forEach((dot, i) => {
+      const h = lottery.holds[i];
+      if (!h) dot.setFillStyle(0x000000, 0).setStrokeStyle(2, 0x3a4652, 1);
+      else if (h.color === 'gold') dot.setFillStyle(this.rainbowAt(i * 0.15), 1).setStrokeStyle(3, 0xffffff, 1);
+      else dot.setFillStyle(HOLD_COLORS[h.color], 1).setStrokeStyle(2, 0xffffff, 0.6);
+    });
+
+    const held = this.heldChain;
+    const fever = held !== null || lottery.feverActive;
+    const chain = held ?? lottery.chain;
+    this.drawAura(fever ? chain : 0, dtSec);
+    this.reel.setVisible(!fever);
+    this.badgeInfo.setVisible(fever);
+    if (held !== null) {
+      this.badgeInfo.setText(`CONTINUE? ${Math.round(this.drawChance * 100)}%`);
+    } else if (fever) {
+      this.badgeInfo.setText(`${lottery.feverRemainingSec.toFixed(1)}s  x${chainMultiplier(chain)}${chain > 1 ? `  ${chain} CHAIN` : ''}`);
+    }
+
+    const d = lottery.draw;
+    const F = BALANCE.fever;
+    for (let i = 0; i < 3; i++) {
+      const box = this.digits[i];
+      if (!d) {
+        box.text.setColor('#5f6f80');
+        box.frame.setStrokeStyle(3, 0x3a4652, 1);
+        continue;
+      }
+      // Gold means a certain win: the frame goes rainbow from the start of the draw.
+      const frameColor = d.color === 'gold' ? this.rainbowAt(i * 0.12) : HOLD_COLORS[d.color];
+      box.frame.setStrokeStyle(4, frameColor, 1);
+      const stopAt = i === 0 ? F.leftStopSec : i === 2 ? F.rightStopSec : d.duration;
+      const final = d.digits[i];
+      let shown: number;
+      if (d.elapsed >= stopAt - 1e-9) {
+        shown = final;
+        box.text.setColor(d.reach && i !== 1 ? '#ffd54f' : '#ffffff');
+      } else if (i === 1 && d.reach && d.elapsed >= F.rightStopSec) {
+        // Reach: the centre slows down and rolls onto its final digit (one off on a near miss).
+        const r = stopAt - d.elapsed;
+        const n = Math.floor(2.5 * r + 1.5 * r * r);
+        shown = (((final - 1 - n) % 9) + 9) % 9 + 1;
+        box.text.setColor('#ffffff');
+      } else {
+        shown = (Math.floor(d.elapsed * 18) + this.spinOffset[i]) % 9 + 1;
+        box.text.setColor('#9fb3c8');
+      }
+      box.text.setText(String(shown));
+    }
+    const reaching = !!d && d.reach && d.elapsed >= F.rightStopSec && d.elapsed < d.duration;
+    this.reachLabel.setVisible(reaching);
+    if (reaching) {
+      const pulse = 0.5 + 0.5 * Math.sin(this.framePhase * Math.PI * 8);
+      this.reachLabel.setScale(1 + 0.08 * pulse);
+      this.reachDim.setFillStyle(0x000000, 0.35);
+    } else {
+      this.reachDim.setFillStyle(0x000000, 0);
+    }
+  }
+
+  /** One-off effects for lottery events (the reel itself is drawn in update). */
+  handle(e: FeverEvent, lottery: FeverLottery): void {
+    switch (e.type) {
+      case 'hold': {
+        const dot = this.holdDots[lottery.holds.length - 1];
+        if (dot) this.scene.tweens.add({ targets: dot, scale: 1.6, duration: 120, yoyo: true, ease: 'Quad.Out' });
+        if (dot && (e.color === 'red' || e.color === 'gold')) this.sparkle(dot.x, dot.y, 8, 50);
+        break;
+      }
+      case 'rightStop':
+        if (e.reach) {
+          this.reachLabel.setScale(0.3);
+          this.scene.tweens.add({ targets: this.reachLabel, scale: 1, duration: 200, ease: 'Back.Out' });
+        }
+        break;
+      case 'result':
+        if (e.hit) for (const b of this.digits) this.scene.tweens.add({ targets: b.text, scale: 1.4, duration: 120, yoyo: true });
+        break;
+      case 'feverContinue': {
+        // Bigger for every chain: text size, stars, shockwaves and a white flash.
+        const k = Math.min(4, e.chain - 1);
+        this.flash(0.35 + 0.1 * k);
+        this.slam(`${e.chain} CHAIN!`, 100 + 14 * k, HEIGHT / 2 - 70, 1000);
+        this.slam(`x${chainMultiplier(e.chain)}`, 90 + 10 * k, HEIGHT / 2 + 60, 1000);
+        this.sparkle(WIDTH / 2, HEIGHT / 2 - 20, 18 + 8 * k, 360 + 60 * k);
+        this.shockwave(WIDTH / 2, HEIGHT / 2 - 20, 1 + Math.min(2, k));
+        this.showBadge();
+        break;
+      }
+      case 'feverEnd':
+        // Above the FEVER tally (showEnd), which appears at the same moment.
+        if (e.capped) this.slam('MAX CHAIN!', 110, 200, 1100);
+        this.hideBadge();
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * FEVER cut-in: white flash, rotating light rays, "FEVER!!" slammed down from 3x with a heavy shake
+   * and a burst of stars, then shrunk into the badge. `onDone` runs after BALANCE.fever.cutInMs.
+   */
+  cutIn(shake: (strength: number) => void, onDone: () => void): void {
+    const s = this.scene;
+    const total = BALANCE.fever.cutInMs;
+    const cx = WIDTH / 2;
+    const cy = HEIGHT / 2 - 20;
+
+    const dim = s.add.rectangle(cx, HEIGHT / 2, WIDTH, HEIGHT, 0x000000, 0.6).setDepth(150);
+    const rays = s.add.graphics().setDepth(151).setPosition(cx, cy);
+    const n = 18;
+    for (let i = 0; i < n; i++) {
+      const a0 = (i / n) * Math.PI * 2;
+      const a1 = a0 + (Math.PI / n) * 0.9;
+      rays.fillStyle(i % 2 ? 0xffd54f : 0xffffff, 0.22);
+      rays.fillTriangle(0, 0, Math.cos(a0) * 900, Math.sin(a0) * 900, Math.cos(a1) * 900, Math.sin(a1) * 900);
+    }
+    rays.setScale(0.2);
+    s.tweens.add({ targets: rays, scale: 1, duration: 260, ease: 'Cubic.Out' });
+    s.tweens.add({ targets: rays, angle: 40, duration: total, ease: 'Linear' });
+
+    const flash = s.add.rectangle(cx, HEIGHT / 2, WIDTH, HEIGHT, 0xffffff, 0.9).setDepth(155);
+    s.tweens.add({ targets: flash, alpha: 0, duration: 260, onComplete: () => flash.destroy() });
+
+    const title = this.track(new RainbowText(s, cx, cy, 'FEVER!!', 190).setDepth(160).setScale(3).setAlpha(0));
+    const mult = this.track(new RainbowText(s, cx, cy + 150, `x${chainMultiplier(1)}`, 80).setDepth(160).setAlpha(0));
+    s.tweens.add({
+      targets: title,
+      scale: 1,
+      alpha: 1,
+      duration: 170,
+      ease: 'Cubic.In',
+      onComplete: () => {
+        shake(4);
+        this.sparkle(cx, cy, 40, 600);
+        this.shockwave(cx, cy, 2);
+        s.tweens.add({ targets: title, scale: 1.08, duration: 90, yoyo: true, ease: 'Quad.Out' });
+        mult.setScale(2.4);
+        s.tweens.add({ targets: mult, scale: 1, alpha: 1, delay: 120, duration: 140, ease: 'Cubic.In' });
+      },
+    });
+
+    s.time.delayedCall(total - 260, () => {
+      s.tweens.add({ targets: [dim, rays], alpha: 0, duration: 240 });
+      s.tweens.add({ targets: [title, mult], scale: 0.3, y: REEL_Y, alpha: 0, duration: 240, ease: 'Cubic.In' });
+    });
+    s.time.delayedCall(total, () => {
+      dim.destroy();
+      rays.destroy();
+      this.untrack(title);
+      this.untrack(mult);
+      this.beatClock = 0;
+      this.showBadge();
+      onDone();
+    });
+  }
+
+  /**
+   * Continue draw when FEVER runs out: the round is held while "CONTINUE" and "END" flicker, slowing
+   * down, and settle on the result after BALANCE.fever.continueDrawMs. `chainBefore` is the chain to
+   * keep showing until then. The result itself is revealed by the caller through handle().
+   */
+  continueDraw(chance: number, continues: boolean, chainBefore: number, onDone: () => void): void {
+    const s = this.scene;
+    const total = BALANCE.fever.continueDrawMs;
+    this.heldChain = chainBefore;
+    this.drawChance = chance;
+    const dim = s.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x000000, 0.45).setDepth(150);
+    const word = s.add
+      .text(WIDTH / 2, HEIGHT / 2 - 30, 'CONTINUE?', { fontFamily: FONT, fontSize: '110px', color: '#ffd54f', fontStyle: 'italic bold' })
+      .setOrigin(0.5)
+      .setPadding(40, 20, 40, 20)
+      .setStroke('#2a1400', 12)
+      .setDepth(160);
+    const odds = s.add
+      .text(WIDTH / 2, HEIGHT / 2 + 70, `${Math.round(chance * 100)}%`, { fontFamily: FONT, fontSize: '48px', color: '#ffffff', fontStyle: 'bold' })
+      .setOrigin(0.5)
+      .setStroke('#2a1400', 8)
+      .setDepth(160);
+    // Flicker between the two outcomes with growing gaps; the last flip before the end is the result.
+    let t = 120;
+    let gap = 50;
+    let showContinue = true;
+    const flips: number[] = [];
+    while (t < total - 60) {
+      flips.push(t);
+      t += gap;
+      gap *= 1.35;
+    }
+    flips.forEach((at, i) => {
+      s.time.delayedCall(at, () => {
+        const last = i === flips.length - 1;
+        showContinue = last ? continues : !showContinue;
+        word.setText(showContinue ? 'CONTINUE' : 'END');
+        word.setColor(showContinue ? '#ffd54f' : '#9fb3c8');
+      });
+    });
+    s.tweens.add({ targets: word, scale: 1.1, duration: 90, yoyo: true, repeat: -1 });
+    s.time.delayedCall(total, () => {
+      dim.destroy();
+      word.destroy();
+      odds.destroy();
+      this.heldChain = null;
+      onDone();
+    });
+  }
+
+  /** FEVER is over: the score it added, in gold, in the middle (clear of the REACH label if a draw follows). */
+  showEnd(bonus: number): void {
+    const t = this.scene.add
+      .text(WIDTH / 2, 320, `FEVER +${Math.floor(bonus).toLocaleString('en-US')}`, {
+        fontFamily: FONT,
+        fontSize: '48px',
+        color: '#ffd54f',
+        fontStyle: 'italic bold',
+      })
+      .setOrigin(0.5)
+      .setStroke('#2a1400', 8)
+      .setDepth(97)
+      .setScale(0.5);
+    this.scene.tweens.add({ targets: t, scale: 1, duration: 200, ease: 'Back.Out' });
+    this.scene.tweens.add({ targets: t, alpha: 0, y: t.y - 40, delay: 1400, duration: 500, onComplete: () => t.destroy() });
+  }
+
+  /**
+   * FEVER aura, redrawn every frame: a rainbow frame around the screen and a colour wash behind the
+   * line, both pulsing on each beat of the FEVER music. Thicker and brighter for each chain.
+   */
+  private drawAura(chain: number, dtSec: number): void {
+    const g = this.aura;
+    g.clear();
+    if (chain <= 0) {
+      this.wash.setFillStyle(0xffffff, 0);
+      return;
+    }
+    this.beatClock += dtSec;
+    const beat = (this.beatClock * FEVER_BPM) / 60;
+    const pulse = Math.exp(-4 * (beat % 1)); // 1 on the beat, decaying to ~0 before the next
+    const k = Math.min(3, chain);
+    const w = 8 + 6 * k + 10 * pulse;
+    const segments = 24;
+    // Four edges, each split into segments that walk the rainbow, so the colour runs around the frame.
+    // Inset by half the width so the whole stroke is on screen.
+    const i0 = w / 2;
+    const edges: [number, number, number, number][] = [
+      [i0, i0, WIDTH - i0, i0],
+      [WIDTH - i0, i0, WIDTH - i0, HEIGHT - i0],
+      [WIDTH - i0, HEIGHT - i0, i0, HEIGHT - i0],
+      [i0, HEIGHT - i0, i0, i0],
+    ];
+    edges.forEach(([x0, y0, x1, y1], e) => {
+      for (let i = 0; i < segments; i++) {
+        const t0 = i / segments;
+        const t1 = (i + 1) / segments;
+        g.lineStyle(w, this.rainbowAt((e + t0) / 4), 0.7 + 0.3 * pulse);
+        g.lineBetween(x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0, x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1);
+      }
+    });
+    this.wash.setFillStyle(this.rainbowAt(0), 0.04 * k + 0.06 * pulse);
+    if (this.badge) this.badge.setScale(1 + 0.06 * pulse);
+  }
+
+  /** Expanding rings from (x, y). */
+  private shockwave(x: number, y: number, rings: number): void {
+    for (let i = 0; i < rings; i++) {
+      const ring = this.scene.add.circle(x, y, 60, 0x000000, 0).setStrokeStyle(10, 0xffffff, 0.9).setDepth(158);
+      this.scene.tweens.add({
+        targets: ring,
+        scale: 9,
+        alpha: 0,
+        delay: i * 110,
+        duration: 650,
+        ease: 'Cubic.Out',
+        onComplete: () => ring.destroy(),
+      });
+    }
+  }
+
+  private flash(alpha: number): void {
+    const f = this.scene.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0xffffff, alpha).setDepth(155);
+    this.scene.tweens.add({ targets: f, alpha: 0, duration: 220, onComplete: () => f.destroy() });
+  }
+
+  private showBadge(): void {
+    if (!this.badge) {
+      this.badge = this.track(new RainbowText(this.scene, WIDTH / 2 + 40, REEL_Y, 'FEVER', 88).setDepth(96));
+    }
+    this.badge.setScale(0.5);
+    this.scene.tweens.add({ targets: this.badge, scale: 1, duration: 200, ease: 'Back.Out' });
+  }
+
+  private hideBadge(): void {
+    const b = this.badge;
+    if (!b) return;
+    this.badge = null;
+    // Quick, so it is gone before the reel shows through it.
+    this.scene.tweens.add({ targets: b, alpha: 0, scale: 0.6, duration: 150, onComplete: () => this.untrack(b) });
+  }
+
+  /** Big rainbow text that punches in, holds, then rises and fades. */
+  private slam(text: string, size: number, y: number, lifeMs: number): void {
+    const t = this.track(new RainbowText(this.scene, WIDTH / 2, y, text, size).setDepth(160).setScale(2.2).setAlpha(0));
+    this.scene.tweens.add({ targets: t, scale: 1, alpha: 1, duration: 150, ease: 'Cubic.In' });
+    this.scene.tweens.add({
+      targets: t,
+      alpha: 0,
+      y: y - 60,
+      delay: lifeMs - 300,
+      duration: 300,
+      onComplete: () => this.untrack(t),
+    });
+  }
+
+  /** Burst of small stars from (x, y). */
+  private sparkle(x: number, y: number, count: number, radius: number): void {
+    for (let i = 0; i < count; i++) {
+      const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = radius * (0.5 + Math.random() * 0.5);
+      const star = this.scene.add
+        .star(x, y, 4, 3, 10, i % 3 === 0 ? 0xffffff : this.rainbowAt(i / count), 1)
+        .setDepth(165);
+      this.scene.tweens.add({
+        targets: star,
+        x: x + Math.cos(a) * dist,
+        y: y + Math.sin(a) * dist,
+        angle: 180,
+        scale: 0.2,
+        alpha: 0,
+        duration: 500 + Math.random() * 300,
+        ease: 'Cubic.Out',
+        onComplete: () => star.destroy(),
+      });
+    }
+  }
+
+  private rainbowAt(offset: number): number {
+    const c = Phaser.Display.Color.HSVToRGB((this.framePhase + offset) % 1, 0.75, 1) as Phaser.Types.Display.ColorObject;
+    return Phaser.Display.Color.GetColor(c.r, c.g, c.b);
+  }
+
+  private track<T extends RainbowText>(t: T): T {
+    this.live.push(t);
+    return t;
+  }
+
+  private untrack(t: RainbowText): void {
+    this.live = this.live.filter((x) => x !== t);
+    t.destroy();
+  }
+}
