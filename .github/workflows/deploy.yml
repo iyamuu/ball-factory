@@ -56,13 +56,12 @@ jobs:
         working-directory: preview-src
         run: |
           npm ci
-          npm run build -- --base=/ball-factory/preview/
+          # Marks preview rounds in the telemetry sheet with the preview commit (github.sha is main's).
+          VITE_BUILD="preview-$(git rev-parse HEAD)" npm run build -- --base=/ball-factory/preview/
           mkdir -p ../dist/preview
           cp -r dist/. ../dist/preview/
         env:
           VITE_TELEMETRY_URL: ${{ vars.TELEMETRY_URL }}
-          # Marks preview rounds in the telemetry sheet.
-          VITE_BUILD: preview-${{ github.sha }}
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
