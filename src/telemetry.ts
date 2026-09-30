@@ -45,8 +45,20 @@ export interface RoundRecord {
   speedSec: Record<string, number>;
   /** Speaker button state when the record was made. */
   muted: boolean;
-  /** Highest fever stage reached (0..3). */
+  /** Highest heat stage reached (0..3); named fever before the lottery existed. */
   fever: number;
+  /** Fever lottery totals, or null when the lottery was off (?fever=0). */
+  lottery: {
+    draws: number;
+    hits: number;
+    reaches: number;
+    feverSec: number;
+    longestChain: number;
+    /** Milestones passed while the holds were full. */
+    lostHolds: number;
+    /** Score added by the FEVER multiplier (included in score). */
+    bonus: number;
+  } | null;
 }
 
 /** Hosts a ?telemetry=<url> override may point at: the tester's own machine, never a third party. */

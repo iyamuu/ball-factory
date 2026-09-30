@@ -1,4 +1,5 @@
 import { BALANCE, type MachineId } from '../config/balance';
+import { FeverLottery, type FeverEvent } from './fever';
 
 export interface LineMachine {
   id: MachineId;
@@ -15,6 +16,15 @@ export interface StepResult {
   triggers: number;
   /** True if boost went from inactive to active during this step. */
   boostStarted: boolean;
+  /** Fever lottery events of this step (empty without a lottery). */
+  fever: FeverEvent[];
+}
+
+export interface SimulationOptions {
+  /** Seed for the fever lottery. Omitted: no lottery (the balance brute force runs without one). */
+  feverSeed?: number;
+  /** Keep `rate` and `heatStage` up to date every step (costs one extra pass over the line per step). */
+  trackHeat?: boolean;
 }
 
 /** A group of balls that share the same value. A batch is a list of groups. */
@@ -51,9 +61,27 @@ export class Simulation {
   bonusTimeSec = 0;
   /** Base round length; EXTEND adds to it. */
   readonly durationSec: number;
+  /** Fever lottery, or null when it is off. */
+  readonly fever: FeverLottery | null;
+  /** Score added by the FEVER multiplier (included in score). */
+  feverBonus = 0;
+  /** Score rate after the last step or noteRate() call (kept only with trackHeat or a lottery). */
+  rate = 0;
+  /** Heat stage, 0..heat.thresholds.length. Only ever rises within a round. */
+  heatStage = 0;
+  private readonly trackHeat: boolean;
 
-  constructor(durationSec: number = BALANCE.round.durationSec) {
+  constructor(durationSec: number = BALANCE.round.durationSec, options: SimulationOptions = {}) {
     this.durationSec = durationSec;
+    this.fever = options.feverSeed === undefined ? null : new FeverLottery(options.feverSeed);
+    this.trackHeat = options.trackHeat === true || this.fever !== null;
+  }
+
+  /** Records a score rate (e.g. right after a pick) and raises the heat stage when it passes a threshold. */
+  noteRate(rate: number): void {
+    this.rate = rate;
+    const t = BALANCE.heat.thresholds;
+    while (this.heatStage < t.length && rate >= t[this.heatStage]) this.heatStage += 1;
   }
 
   /** Elapsed simulation time. One multiplication, so offer times and the round end compare exactly. */
@@ -167,11 +195,18 @@ export class Simulation {
       gained += g.count * g.value;
       count += g.count;
     }
+    // FEVER multiplies what reaches the bin during this step (state from the previous step).
+    const multiplier = this.fever?.multiplier ?? 1;
+    this.feverBonus += gained * (multiplier - 1);
+    gained *= multiplier;
     this.score += gained;
     this.ballsOut += count;
     this.steps += 1;
 
-    return { gained, triggers, boostStarted: !wasActive && this.boostActive };
+    if (this.trackHeat) this.noteRate(this.scoreRate);
+    const fever = this.fever ? this.fever.advance(this.stepSec, this.score, this.heatStage) : [];
+
+    return { gained, triggers, boostStarted: !wasActive && this.boostActive, fever };
   }
 
   /**

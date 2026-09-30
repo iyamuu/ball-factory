@@ -7,7 +7,23 @@ import { BALANCE } from '../config/balance';
  * context must never affect the game. Nothing here is tied to the number of balls: the frequent
  * effects are paced by the caller in wall-clock time and rate-limited again here.
  */
-export type SfxName = 'gain' | 'pick' | 'offer' | 'accel' | 'extend' | 'best' | 'fever' | 'end' | 'fanfare';
+export type SfxName =
+  | 'gain'
+  | 'pick'
+  | 'offer'
+  | 'accel'
+  | 'extend'
+  | 'best'
+  | 'heat'
+  | 'hold'
+  | 'reelStop'
+  | 'reach'
+  | 'miss'
+  | 'feverHit'
+  | 'feverContinue'
+  | 'feverEnd'
+  | 'end'
+  | 'fanfare';
 
 type Wave = OscillatorType;
 
@@ -42,7 +58,14 @@ export class Sfx {
     accel: 0,
     extend: 0,
     best: 0,
-    fever: 0,
+    heat: 0,
+    hold: 0,
+    reelStop: 0,
+    reach: 0,
+    miss: 0,
+    feverHit: 0,
+    feverContinue: 0,
+    feverEnd: 0,
     end: 0,
     fanfare: 0,
   };
@@ -115,16 +138,16 @@ export class Sfx {
   }
 
   /**
-   * A "+N" popup: a small coin sound. Pitch rises with the number of digits of N and with the
-   * fever stage, so a rich stream sounds brighter. Rate-limited in wall-clock time.
+   * A "+N" popup: a small coin sound. Pitch rises with the number of digits of N and with `lift`
+   * (heat stage, plus more during FEVER), so a rich stream sounds brighter. Rate-limited in wall-clock time.
    */
-  gain(amount: number, feverStage: number): void {
+  gain(amount: number, lift: number): void {
     const now = performance.now() / 1000;
     if (now - this.lastGainAt < BALANCE.sound.minGainGapSec) return;
     this.lastGainAt = now;
     this.count('gain');
     const digits = Math.max(1, Math.floor(Math.log10(Math.max(1, amount))) + 1);
-    const freq = 660 * Math.pow(1.19, digits - 1 + feverStage);
+    const freq = 660 * Math.pow(1.19, digits - 1 + lift);
     this.play([{ freq, to: freq * 1.5, dur: 0.06, wave: 'sine', gain: 0.22 }]);
   }
 
@@ -169,9 +192,9 @@ export class Sfx {
     this.play([523, 659, 784, 1047].map((freq, i) => ({ freq, dur: 0.14, at: i * 0.07, wave: 'square' as Wave, gain: 0.2 })));
   }
 
-  /** Fever stage up: rising sweep plus a chord, higher for each stage. */
-  fever(stage: number): void {
-    this.count('fever');
+  /** Heat stage up: rising sweep plus a chord, higher for each stage. */
+  heat(stage: number): void {
+    this.count('heat');
     const base = 262 * Math.pow(1.5, stage - 1);
     this.play([
       { freq: base, to: base * 4, dur: 0.35, wave: 'sawtooth', gain: 0.14 },
@@ -179,6 +202,65 @@ export class Sfx {
       { freq: base * 2.5, dur: 0.5, at: 0.3, wave: 'triangle', gain: 0.18 },
       { freq: base * 3, dur: 0.5, at: 0.3, wave: 'triangle', gain: 0.18 },
     ]);
+  }
+
+  /** Hold added: a blip, higher and brighter for a hotter colour (0 = white .. 4 = gold). */
+  hold(colorIndex: number): void {
+    this.count('hold');
+    const freq = 988 * Math.pow(1.26, colorIndex);
+    const notes: Note[] = [{ freq, dur: 0.06, wave: 'square', gain: 0.12 }];
+    if (colorIndex >= 3) notes.push({ freq: freq * 1.5, dur: 0.12, at: 0.06, wave: 'square', gain: 0.14 });
+    this.play(notes);
+  }
+
+  /** A reel digit stops. */
+  reelStop(): void {
+    this.count('reelStop');
+    this.play([{ freq: 1400, to: 700, dur: 0.04, wave: 'square', gain: 0.12 }]);
+  }
+
+  /** Reach: two-tone alarm, then a slow rising drone under the rolling centre digit. */
+  reach(sec: number): void {
+    this.count('reach');
+    const notes: Note[] = [];
+    for (let i = 0; i < 4; i++) {
+      notes.push({ freq: i % 2 ? 1175 : 880, dur: 0.09, at: i * 0.1, wave: 'square', gain: 0.16 });
+    }
+    notes.push({ freq: 180, to: 720, dur: Math.max(0.5, sec - 0.45), at: 0.42, wave: 'sawtooth', gain: 0.09 });
+    this.play(notes);
+  }
+
+  /** Draw lost: short falling note. */
+  miss(): void {
+    this.count('miss');
+    this.play([{ freq: 330, to: 220, dur: 0.18, wave: 'triangle', gain: 0.16 }]);
+  }
+
+  /** FEVER hit: impact, a fast rising run and a held major chord. */
+  feverHit(): void {
+    this.count('feverHit');
+    const run = [523, 659, 784, 1047, 1319, 1568];
+    this.play([
+      { freq: 90, to: 40, dur: 0.35, wave: 'sine', gain: 0.5 },
+      { freq: 200, to: 1600, dur: 0.2, wave: 'sawtooth', gain: 0.12 },
+      ...run.map((freq, i) => ({ freq, dur: 0.1, at: 0.18 + i * 0.06, wave: 'square' as Wave, gain: 0.16 })),
+      { freq: 1047, dur: 0.6, at: 0.56, wave: 'triangle', gain: 0.22 },
+      { freq: 1319, dur: 0.6, at: 0.56, wave: 'triangle', gain: 0.18 },
+      { freq: 1568, dur: 0.6, at: 0.56, wave: 'triangle', gain: 0.18 },
+    ]);
+  }
+
+  /** FEVER continues: arpeggio, a step higher for each chain. */
+  feverContinue(chain: number): void {
+    this.count('feverContinue');
+    const lift = Math.pow(1.122, Math.min(6, chain - 1));
+    this.play([659, 784, 988, 1319].map((f, i) => ({ freq: f * lift, dur: 0.12, at: i * 0.07, wave: 'square' as Wave, gain: 0.18 })));
+  }
+
+  /** FEVER over: falling three notes. */
+  feverEnd(): void {
+    this.count('feverEnd');
+    this.play([784, 659, 523].map((freq, i) => ({ freq, dur: 0.14, at: i * 0.12, wave: 'triangle' as Wave, gain: 0.2 })));
   }
 
   /** Round over: three-note close. */

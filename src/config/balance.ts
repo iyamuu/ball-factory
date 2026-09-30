@@ -224,15 +224,67 @@ export const BALANCE = {
     minGainGapSec: 0.2,
   },
 
-  fever: {
+  heat: {
     /**
-     * Score rate (/s) at which fever stage 1, 2 and 3 start. The stage never drops within a round.
+     * Score rate (/s) at which heat stage 1, 2 and 3 start. The stage never drops within a round.
      * Chosen from `npm run balance -- --rates` on 20 seeds (docs/DESIGN.md): 30 is reached by half
      * of random-pick rounds around 45 s and by the simple rule at 35 s; 150 by the simple rule at
      * 50 s and by half of random rounds only at the end; 1000 by fewer than 10% of random rounds
      * and by three quarters of optimal rounds in the last seconds.
+     * Heat changes the colours and raises the share of hot holds in the fever lottery (below).
      */
     thresholds: [30, 150, 1000],
+  },
+
+  /**
+   * Fever lottery (docs/DESIGN.md). Every score milestone adds a hold; holds are drawn one at a time
+   * on a three-digit reel; a hit starts FEVER, which multiplies the score for a while and may continue.
+   * Results come from a generator seeded by the round seed, so a seed and a pick sequence always give
+   * the same round. The ?fever=0 URL parameter turns the lottery off for comparison.
+   */
+  fever: {
+    enabled: true,
+    /** Milestone k (0-based) is at milestoneBase * milestoneGrowth^k points; each one adds a hold. */
+    milestoneBase: 50,
+    milestoneGrowth: 1.8,
+    /** Holds kept at once; milestones passed while full are lost. */
+    maxHolds: 4,
+    /** Hold colours, coolest first. The last one is a certain hit. */
+    colors: ['white', 'blue', 'green', 'red', 'gold'] as const,
+    /** Relative weight of each colour when a hold is added, by heat stage 0..3. */
+    colorWeightsByHeat: [
+      [60, 20, 10, 7, 3],
+      [50, 24, 13, 9, 4],
+      [40, 27, 16, 12, 5],
+      [30, 30, 19, 15, 6],
+    ],
+    /** Hit chance per colour. Red is the one near 50%, where anticipation peaks. */
+    hitChance: [0.03, 0.12, 0.3, 0.5, 1],
+    /** Share of misses shown with a reach (the first two digits match). Hits always reach. */
+    reachOnMiss: 0.25,
+    /**
+     * After this many misses in a row the next hold is a hit (pity ceiling). With 8, a quarter of
+     * random-pick rounds (about 8 draws) never hit; with 5, 2% (`npm run balance -- --fever`).
+     */
+    ceiling: 5,
+    /** Draw length without a reach and with one (sim seconds). */
+    drawSec: 1.5,
+    reachDrawSec: 4,
+    /** Sim-time into a draw at which the left and right digits stop. */
+    leftStopSec: 1.0,
+    rightStopSec: 1.5,
+    /**
+     * Score multiplier while FEVER runs. Chosen with `npm run balance -- --fever` (10 seeds x 50
+     * lottery seeds): x2 added 35% on average to simple-rule rounds and 81% at p95; x1.5 adds 14%
+     * (random picks) to 21% (optimum) on average and at most 44% at p95.
+     */
+    scoreMultiplier: 1.5,
+    /** FEVER length per hit or continuation (sim seconds). */
+    durationSec: 5,
+    /** Chance that FEVER continues for another durationSec when it runs out. */
+    continueChance: 0.5,
+    /** Wall-clock length of the hit cut-in, during which the round is paused. */
+    cutInMs: 1200,
   },
 
   feedback: {

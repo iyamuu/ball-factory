@@ -50,6 +50,15 @@ export class ResultScene extends Phaser.Scene {
     this.add
       .text(WIDTH / 2, 435, `PEAK ${peakRate.toFixed(1)} /s`, { fontFamily: FONT, fontSize: '28px', color: '#9fb3c8' })
       .setOrigin(0.5);
+    if (data.fever) {
+      const f = data.fever;
+      const text = f.hits > 0
+        ? `FEVER ${f.hits}x  +${f.bonus.toLocaleString('en-US')}${f.longestChain > 1 ? `  (${f.longestChain} CHAIN)` : ''}`
+        : 'FEVER -';
+      this.add
+        .text(WIDTH / 2, 478, text, { fontFamily: FONT, fontSize: '28px', color: f.hits > 0 ? '#ffd54f' : '#5f6f80', fontStyle: 'bold' })
+        .setOrigin(0.5);
+    }
 
     const btn = this.add.rectangle(WIDTH / 2, 560, 360, 100, 0x4fc3f7, 1);
     btn.setStrokeStyle(4, 0xe8eef4, 1);

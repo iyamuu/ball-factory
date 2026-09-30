@@ -3,6 +3,7 @@ import { BALANCE, type MachineDef, type MachineId } from '../config/balance';
 import { generateOffers, type Offer } from '../game/cards';
 import { Rng } from '../game/rng';
 import { Simulation } from '../game/simulation';
+import type { FeverEvent } from '../game/fever';
 import { loadBest, loadSoundEnabled, loadSpeed, saveBest, saveSoundEnabled, saveSpeed } from '../game/storage';
 import { Sfx, type SfxName } from '../audio/sfx';
 import { WIDTH, HEIGHT } from '../main';
@@ -10,6 +11,7 @@ import { RUNTIME, randomSeed } from '../runtime';
 import { CardPanel } from '../ui/CardPanel';
 import { drawMachineIcon, FONT } from '../ui/icons';
 import { spawnPopup } from '../ui/Popup';
+import { FeverFx } from '../ui/FeverFx';
 import { playerId, recordRound, screenInfo, type OfferRecord, type RoundRecord } from '../telemetry';
 import { TELEMETRY } from '../config/telemetry';
 
@@ -63,6 +65,8 @@ export interface RoundResult {
   offers: OfferRecord[];
   /** Round length including EXTEND. */
   roundLengthSec: number;
+  /** Fever lottery summary, or null when the lottery was off. */
+  fever: { hits: number; bonus: number; longestChain: number } | null;
 }
 
 /** Testing hook exposed on window.__bf. */
@@ -86,16 +90,22 @@ interface DebugHook {
   /** Times each sound effect was requested this round (played or not). */
   sounds: () => Record<SfxName, number>;
   soundEnabled: () => boolean;
-  /** Fever stage reached so far this round (0..3). */
+  /** Heat stage reached so far this round (0..3). */
   fever: () => number;
+  /** Fever lottery state, or null with ?fever=0. */
+  lottery: () => Simulation['fever'];
+  /** True while the FEVER cut-in holds the round. */
+  cutIn: () => boolean;
 }
 
-/** Background colour per fever stage (0 = normal). Deeper and warmer as the stage rises. */
-const FEVER_BACKGROUND = [0x101418, 0x121a2e, 0x1e1432, 0x2c1410];
-/** Line colour per fever stage. */
-const FEVER_LINE = [0x2b3642, 0x2f4a6a, 0x5a3a7a, 0x8a4a2a];
-/** "+N" popup colour per fever stage. */
-const FEVER_POPUP = ['#c8f7c5', '#9fd8ff', '#e0a8ff', '#ffc27a'];
+/** Background colour per heat stage (0 = normal). Deeper and warmer as the stage rises. */
+const HEAT_BACKGROUND = [0x101418, 0x121a2e, 0x1e1432, 0x2c1410];
+/** Line colour per heat stage. */
+const HEAT_LINE = [0x2b3642, 0x2f4a6a, 0x5a3a7a, 0x8a4a2a];
+/** "+N" popup colour per heat stage. */
+const HEAT_POPUP = ['#c8f7c5', '#9fd8ff', '#e0a8ff', '#ffc27a'];
+/** Hold colours in lottery order, for the hold sound. */
+const HOLD_ORDER = BALANCE.fever.colors as readonly string[];
 
 /** Offset of the restart button from the top-right corner, clear of the timer and score. */
 const RETRY_INSET = 56;
@@ -141,8 +151,11 @@ export class GameScene extends Phaser.Scene {
   private bestPassed = false;
   /** "/s" readout while it counts up after a pick; null shows the live value. */
   private rateDisplay: { value: number } | null = null;
-  /** Fever stage, 0..thresholds.length. Only ever rises within a round. */
-  private feverStage = 0;
+  /** Heat stage shown on screen; follows sim.heatStage. */
+  private heatShown = 0;
+  private feverFx: FeverFx | null = null;
+  /** True while the FEVER cut-in plays: the round is held like during an offer, without the panel. */
+  private cutInActive = false;
   /** True while the TAP screen is up: nothing advances until the first tap. */
   private waitingForStart = false;
   private startOverlay: Phaser.GameObjects.Container | null = null;
@@ -170,8 +183,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   create(): void {
-    this.sim = new Simulation(RUNTIME.roundDurationSec);
     this.seed = RUNTIME.fixedSeed ?? randomSeed();
+    this.sim = new Simulation(RUNTIME.roundDurationSec, { trackHeat: true, feverSeed: RUNTIME.fever ? this.seed : undefined });
     const extend = BALANCE.machines.extend;
     const longestRoundSec = RUNTIME.roundDurationSec + extend.maxPerRound * extend.seconds;
     this.offers = generateOffers(this.seed, longestRoundSec);
@@ -191,8 +204,9 @@ export class GameScene extends Phaser.Scene {
     this.previousBest = loadBest();
     this.bestPassed = false;
     this.rateDisplay = null;
-    this.feverStage = 0;
-    this.cameras.main.setBackgroundColor(FEVER_BACKGROUND[0]);
+    this.heatShown = 0;
+    this.cutInActive = false;
+    this.cameras.main.setBackgroundColor(HEAT_BACKGROUND[0]);
     // The Sfx object outlives scene restarts so the unlocked audio context is kept; the per-round
     // counters start again.
     this.sfx ??= new Sfx(RUNTIME.sound ?? loadSoundEnabled() ?? BALANCE.sound.enabled);
@@ -207,6 +221,7 @@ export class GameScene extends Phaser.Scene {
 
     this.buildStaticUi();
     this.buildBallPool();
+    this.feverFx = this.sim.fever ? new FeverFx(this) : null;
     this.panel = new CardPanel(this);
     this.buildRetryButton();
     this.buildSpeedButton();
@@ -235,13 +250,16 @@ export class GameScene extends Phaser.Scene {
       setSpeed: (speed) => this.setSpeed(speed),
       sounds: () => ({ ...this.sfx.counts }),
       soundEnabled: () => this.sfx.enabled,
-      fever: () => this.feverStage,
+      fever: () => this.heatShown,
+      lottery: () => this.sim.fever,
+      cutIn: () => this.cutInActive,
     };
     (window as unknown as { __bf: DebugHook }).__bf = hook;
   }
 
   update(_time: number, deltaMs: number): void {
-    if (this.waitingForStart || this.ended || this.paused) return;
+    if (this.sim.fever && this.feverFx) this.feverFx.update(this.sim.fever, Math.min(deltaMs / 1000, 0.1));
+    if (this.waitingForStart || this.ended || this.paused || this.cutInActive) return;
 
     // The first delta after create() includes scene construction time; do not count it as play time.
     if (this.skipNextDelta) {
@@ -262,7 +280,7 @@ export class GameScene extends Phaser.Scene {
       this.simAccumulator -= step;
       this.runSimStep();
       steps += 1;
-      if (this.paused || this.ended) break;
+      if (this.paused || this.ended || this.cutInActive) break;
     }
 
     // Visuals are cosmetic: clamp so balls do not teleport after a long frame. They follow sim time,
@@ -278,8 +296,8 @@ export class GameScene extends Phaser.Scene {
 
   private runSimStep(): void {
     const res = this.sim.step();
-    // scoreRate runs the line once; compute it a single time per step for the peak and the fever check.
-    const rate = this.sim.scoreRate;
+    // The simulation keeps the score rate of this step (trackHeat), for the peak and the heat stage.
+    const rate = this.sim.rate;
     this.popupGain += res.gained;
     // Popups are paced in wall-clock time so their fixed lifetime still keeps them from stacking.
     this.popupAcc += this.sim.stepSec / this.speed;
@@ -298,7 +316,8 @@ export class GameScene extends Phaser.Scene {
       this.bestPassed = true;
       this.showBestPassed();
     }
-    this.checkFever(rate);
+    this.checkHeat();
+    for (const e of res.fever) this.onFeverEvent(e);
 
     if (this.popupAcc >= BALANCE.visuals.popupIntervalSec) {
       this.popupAcc = 0;
@@ -312,7 +331,12 @@ export class GameScene extends Phaser.Scene {
       this.endRound();
       return;
     }
+    // A hit holds the round for the cut-in; the offer check runs when it is over.
+    if (this.cutInActive) return;
+    this.checkOffer();
+  }
 
+  private checkOffer(): void {
     // Offers keep coming every interval while the round lasts; EXTEND can make later ones reachable.
     const next = this.offers[this.nextOffer];
     if (next && this.sim.timeSec >= next.atSec) this.showOffer(next);
@@ -368,20 +392,65 @@ export class GameScene extends Phaser.Scene {
       }
     }
     if (afterRate >= beforeRate * 1.5) this.shake(1);
-    this.checkFever(afterRate);
+    this.sim.noteRate(afterRate);
+    this.checkHeat();
   }
 
-  /** Raises the fever stage when the score rate passes the next threshold. Never lowers it. */
-  private checkFever(rate: number): void {
-    const thresholds = BALANCE.fever.thresholds;
-    let stage = this.feverStage;
-    while (stage < thresholds.length && rate >= thresholds[stage]) stage += 1;
-    if (stage === this.feverStage) return;
-    this.feverStage = stage;
-    this.sfx.fever(stage);
+  /** Sound and one-off effects for lottery events. The reel and holds redraw themselves every frame. */
+  private onFeverEvent(e: FeverEvent): void {
+    const lottery = this.sim.fever;
+    if (!lottery || !this.feverFx) return;
+    this.feverFx.handle(e, lottery);
+    switch (e.type) {
+      case 'hold':
+        this.sfx.hold(HOLD_ORDER.indexOf(e.color));
+        break;
+      case 'leftStop':
+        this.sfx.reelStop();
+        break;
+      case 'rightStop':
+        this.sfx.reelStop();
+        if (e.reach && lottery.draw) this.sfx.reach((lottery.draw.duration - lottery.draw.elapsed) / this.speed);
+        break;
+      case 'result':
+        if (!e.hit) this.sfx.miss();
+        else this.sfx.reelStop();
+        break;
+      case 'feverStart':
+        this.sfx.feverHit();
+        this.cutInActive = true;
+        this.feverFx.cutIn(
+          (s) => this.shake(s),
+          () => {
+            if (this.ended) return;
+            this.cutInActive = false;
+            // The frame that ends the cut-in must not count the hold as play time.
+            this.skipNextDelta = true;
+            this.checkOffer();
+          },
+        );
+        break;
+      case 'feverContinue':
+        this.sfx.feverContinue(e.chain);
+        this.shake(1.5);
+        break;
+      case 'feverEnd':
+        this.sfx.feverEnd();
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Shows the heat stage the simulation reached (it never drops within a round). */
+  private checkHeat(): void {
+    const stage = this.sim.heatStage;
+    if (stage === this.heatShown) return;
+    this.heatShown = stage;
+    this.sfx.heat(stage);
     // Background and line shift to the stage colour; a short flash marks the moment.
     const from = Phaser.Display.Color.IntegerToColor(this.cameras.main.backgroundColor.color);
-    const to = Phaser.Display.Color.IntegerToColor(FEVER_BACKGROUND[stage]);
+    const to = Phaser.Display.Color.IntegerToColor(HEAT_BACKGROUND[stage]);
     const mix = { t: 0 };
     this.tweens.add({
       targets: mix,
@@ -393,18 +462,18 @@ export class GameScene extends Phaser.Scene {
       },
     });
     this.lineGfx.clear();
-    this.lineGfx.lineStyle(6, FEVER_LINE[stage], 1);
+    this.lineGfx.lineStyle(6, HEAT_LINE[stage], 1);
     this.lineGfx.lineBetween(SOURCE_X, LINE_Y, BIN_X, LINE_Y);
-    const flash = this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, FEVER_LINE[stage], 0.35).setDepth(40);
+    const flash = this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, HEAT_LINE[stage], 0.35).setDepth(40);
     this.tweens.add({ targets: flash, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
-    // Below the line, clear of the multiplier popup at the centre and the machine labels.
+    // Under the timer, clear of the multiplier popup at the centre and of the lottery reel at the bottom.
     const label = this.add
-      .text(WIDTH / 2, 610, `FEVER ${stage}`, { fontFamily: FONT, fontSize: '72px', color: FEVER_POPUP[stage], fontStyle: 'bold' })
-      .setOrigin(0.5)
+      .text(40, 120, `HEAT ${stage}`, { fontFamily: FONT, fontSize: '44px', color: HEAT_POPUP[stage], fontStyle: 'bold' })
+      .setOrigin(0, 0.5)
       .setDepth(50)
       .setScale(0.5);
     this.tweens.add({ targets: label, scale: 1, duration: 200, ease: 'Back.Out' });
-    this.tweens.add({ targets: label, alpha: 0, y: 560, delay: 500, duration: 700, onComplete: () => label.destroy() });
+    this.tweens.add({ targets: label, alpha: 0, y: 90, delay: 900, duration: 700, onComplete: () => label.destroy() });
     this.shake(1);
   }
 
@@ -492,6 +561,9 @@ export class GameScene extends Phaser.Scene {
       seed: this.seed,
       offers: this.offerLog,
       roundLengthSec: this.sim.durationSec + this.sim.bonusTimeSec,
+      fever: this.sim.fever
+        ? { hits: this.sim.fever.hits, bonus: Math.floor(this.sim.feverBonus), longestChain: this.sim.fever.longestChain }
+        : null,
     };
     // Fire-and-forget: the record is stored locally and posted when an endpoint is configured.
     recordRound(this.roundRecord(false));
@@ -528,7 +600,18 @@ export class GameScene extends Phaser.Scene {
       speed: this.speed,
       speedSec: Object.fromEntries(Object.entries(this.speedSec).map(([k, v]) => [k, Math.round(v * 100) / 100])),
       muted: !this.sfx.enabled,
-      fever: this.feverStage,
+      fever: this.heatShown,
+      lottery: this.sim.fever
+        ? {
+            draws: this.sim.fever.draws,
+            hits: this.sim.fever.hits,
+            reaches: this.sim.fever.reaches,
+            feverSec: Math.round(this.sim.fever.feverSec * 100) / 100,
+            longestChain: this.sim.fever.longestChain,
+            lostHolds: this.sim.fever.lostHolds,
+            bonus: Math.floor(this.sim.feverBonus),
+          }
+        : null,
     };
   }
 
@@ -719,9 +802,10 @@ export class GameScene extends Phaser.Scene {
   private flushGainPopup(): void {
     // After the round ends only the ending cue plays; a popup that fell on the last step is dropped.
     // While an offer is open only its cue plays; a popup that fell on the same step waits for the pick.
-    if (this.pendingGainPopup <= 0 || this.ended || this.paused) return;
-    spawnPopup(this, WIDTH / 2 + 230, 215, `+${this.pendingGainPopup}`, false, FEVER_POPUP[this.feverStage]);
-    this.sfx.gain(this.pendingGainPopup, this.feverStage);
+    if (this.pendingGainPopup <= 0 || this.ended || this.paused || this.cutInActive) return;
+    const fever = this.sim.fever?.feverActive === true;
+    spawnPopup(this, WIDTH / 2 + 230, 215, `+${this.pendingGainPopup}`, false, fever ? '#ffe81a' : HEAT_POPUP[this.heatShown]);
+    this.sfx.gain(this.pendingGainPopup, this.heatShown + (fever ? 2 : 0));
     this.pendingGainPopup = 0;
   }
 
