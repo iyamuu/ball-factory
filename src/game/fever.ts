@@ -29,7 +29,7 @@ export type FeverEvent =
   | { type: 'result'; hit: boolean }
   | { type: 'feverStart' }
   | { type: 'feverContinue'; chain: number }
-  | { type: 'feverEnd'; chain: number };
+  | { type: 'feverEnd'; chain: number; capped: boolean };
 
 const F = BALANCE.fever;
 
@@ -44,7 +44,7 @@ export function chainMultiplier(chain: number): number {
  *
  * Every score milestone (milestoneBase * milestoneGrowth^k) adds a hold, up to maxHolds. When no draw
  * and no FEVER is running, the next hold is drawn; a hit starts FEVER (score x chainMultiplier(chain) for
- * durationSec), and each time FEVER runs out it continues with continueChance. Holds added during a
+ * durationSec), and each time FEVER runs out it continues with continueByHeat[heat], up to maxChain. Holds added during a
  * draw or FEVER wait. Everything runs on sim time, so offers pause it with the rest of the round.
  */
 export class FeverLottery {
@@ -87,7 +87,7 @@ export class FeverLottery {
 
   /**
    * Advances by dt sim seconds. `score` is the round score after this step; `heat` (0..3) sets the
-   * colour weights of holds added now. Returns what happened, in order, for the presentation.
+   * chance that FEVER continues when it runs out now. Returns what happened, in order, for the presentation.
    */
   advance(dt: number, score: number, heat: number): FeverEvent[] {
     const events: FeverEvent[] = [];
@@ -98,7 +98,7 @@ export class FeverLottery {
         this.lostHolds += 1;
         continue;
       }
-      const hold = this.makeHold(heat);
+      const hold = this.makeHold();
       this.holds.push(hold);
       events.push({ type: 'hold', color: hold.color });
     }
@@ -108,13 +108,15 @@ export class FeverLottery {
       this.feverRemainingSec -= dt;
       if (this.feverRemainingSec <= 1e-9) {
         this.feverRemainingSec = 0;
-        if (this.rng.next() < F.continueChance) {
+        const capped = this.chain >= F.maxChain;
+        const chance = F.continueByHeat[Math.max(0, Math.min(F.continueByHeat.length - 1, heat))];
+        if (!capped && this.rng.next() < chance) {
           this.chain += 1;
           this.feverRemainingSec = F.durationSec;
           this.longestChain = Math.max(this.longestChain, this.chain);
           events.push({ type: 'feverContinue', chain: this.chain });
         } else {
-          events.push({ type: 'feverEnd', chain: this.chain });
+          events.push({ type: 'feverEnd', chain: this.chain, capped });
         }
       }
       return events;
@@ -151,8 +153,8 @@ export class FeverLottery {
     return events;
   }
 
-  private makeHold(heat: number): Hold {
-    const weights = F.colorWeightsByHeat[Math.max(0, Math.min(F.colorWeightsByHeat.length - 1, heat))];
+  private makeHold(): Hold {
+    const weights = F.colorWeights;
     const total = weights.reduce((a, b) => a + b, 0);
     let r = this.rng.next() * total;
     let ci = 0;

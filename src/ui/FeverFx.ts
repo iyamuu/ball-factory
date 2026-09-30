@@ -116,6 +116,12 @@ export class FeverFx {
   private wash: Phaser.GameObjects.Rectangle;
   /** Wall-clock seconds since FEVER started, for the beat pulse (same tempo as the FEVER music). */
   private beatClock = 0;
+  /**
+   * While the continue draw plays, the chain shown before it. The lottery has already decided, so the
+   * aura and badge keep this value until the result is revealed. null otherwise.
+   */
+  private heldChain: number | null = null;
+  private drawChance = 0;
 
   constructor(private scene: Phaser.Scene) {
     this.reachDim = scene.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x000000, 0).setDepth(88);
@@ -164,12 +170,16 @@ export class FeverFx {
       else dot.setFillStyle(HOLD_COLORS[h.color], 1).setStrokeStyle(2, 0xffffff, 0.6);
     });
 
-    const fever = lottery.feverActive;
-    this.drawAura(fever ? lottery.chain : 0, dtSec);
+    const held = this.heldChain;
+    const fever = held !== null || lottery.feverActive;
+    const chain = held ?? lottery.chain;
+    this.drawAura(fever ? chain : 0, dtSec);
     this.reel.setVisible(!fever);
     this.badgeInfo.setVisible(fever);
-    if (fever) {
-      this.badgeInfo.setText(`${lottery.feverRemainingSec.toFixed(1)}s  x${chainMultiplier(lottery.chain)}${lottery.chain > 1 ? `  ${lottery.chain} CHAIN` : ''}`);
+    if (held !== null) {
+      this.badgeInfo.setText(`CONTINUE? ${Math.round(this.drawChance * 100)}%`);
+    } else if (fever) {
+      this.badgeInfo.setText(`${lottery.feverRemainingSec.toFixed(1)}s  x${chainMultiplier(chain)}${chain > 1 ? `  ${chain} CHAIN` : ''}`);
     }
 
     const d = lottery.draw;
@@ -243,6 +253,8 @@ export class FeverFx {
         break;
       }
       case 'feverEnd':
+        // Above the FEVER tally (showEnd), which appears at the same moment.
+        if (e.capped) this.slam('MAX CHAIN!', 110, 200, 1100);
         this.hideBadge();
         break;
       default:
@@ -305,6 +317,56 @@ export class FeverFx {
       this.untrack(mult);
       this.beatClock = 0;
       this.showBadge();
+      onDone();
+    });
+  }
+
+  /**
+   * Continue draw when FEVER runs out: the round is held while "CONTINUE" and "END" flicker, slowing
+   * down, and settle on the result after BALANCE.fever.continueDrawMs. `chainBefore` is the chain to
+   * keep showing until then. The result itself is revealed by the caller through handle().
+   */
+  continueDraw(chance: number, continues: boolean, chainBefore: number, onDone: () => void): void {
+    const s = this.scene;
+    const total = BALANCE.fever.continueDrawMs;
+    this.heldChain = chainBefore;
+    this.drawChance = chance;
+    const dim = s.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x000000, 0.45).setDepth(150);
+    const word = s.add
+      .text(WIDTH / 2, HEIGHT / 2 - 30, 'CONTINUE?', { fontFamily: FONT, fontSize: '110px', color: '#ffd54f', fontStyle: 'italic bold' })
+      .setOrigin(0.5)
+      .setPadding(40, 20, 40, 20)
+      .setStroke('#2a1400', 12)
+      .setDepth(160);
+    const odds = s.add
+      .text(WIDTH / 2, HEIGHT / 2 + 70, `${Math.round(chance * 100)}%`, { fontFamily: FONT, fontSize: '48px', color: '#ffffff', fontStyle: 'bold' })
+      .setOrigin(0.5)
+      .setStroke('#2a1400', 8)
+      .setDepth(160);
+    // Flicker between the two outcomes with growing gaps; the last flip before the end is the result.
+    let t = 120;
+    let gap = 50;
+    let showContinue = true;
+    const flips: number[] = [];
+    while (t < total - 60) {
+      flips.push(t);
+      t += gap;
+      gap *= 1.35;
+    }
+    flips.forEach((at, i) => {
+      s.time.delayedCall(at, () => {
+        const last = i === flips.length - 1;
+        showContinue = last ? continues : !showContinue;
+        word.setText(showContinue ? 'CONTINUE' : 'END');
+        word.setColor(showContinue ? '#ffd54f' : '#9fb3c8');
+      });
+    });
+    s.tweens.add({ targets: word, scale: 1.1, duration: 90, yoyo: true, repeat: -1 });
+    s.time.delayedCall(total, () => {
+      dim.destroy();
+      word.destroy();
+      odds.destroy();
+      this.heldChain = null;
       onDone();
     });
   }

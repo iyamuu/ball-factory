@@ -226,14 +226,15 @@ export const BALANCE = {
 
   heat: {
     /**
-     * Score rate (/s) at which heat stage 1, 2 and 3 start. The stage never drops within a round.
-     * Chosen from `npm run balance -- --rates` on 20 seeds (docs/DESIGN.md): 30 is reached by half
-     * of random-pick rounds around 45 s and by the simple rule at 35 s; 150 by the simple rule at
-     * 50 s and by half of random rounds only at the end; 1000 by fewer than 10% of random rounds
-     * and by three quarters of optimal rounds in the last seconds.
-     * Heat changes the colours and raises the share of hot holds in the fever lottery (below).
+     * Score rate without the ACCEL boost (/s) at which heat stage 1, 2 and 3 start. The stage never drops
+     * within a round, and a boost does not count, so a stage is earned by the line itself. Heat raises
+     * the FEVER continue chance (fever.continueByHeat). Chosen from `npm run balance -- --rates` on 20
+     * seeds: 25 is reached by half of random-pick rounds around 50 s and by the simple rule at 35 s; 100
+     * by the simple rule around 50 s and by about a quarter of random rounds at the end; 500 by half of
+     * optimal rounds and fewer than half of simple-rule rounds at the end, and by no random rounds.
+     * (The first thresholds, 30 / 150 / 1000, were on the rate with the boost.)
      */
-    thresholds: [30, 150, 1000],
+    thresholds: [25, 100, 500],
   },
 
   /**
@@ -251,13 +252,12 @@ export const BALANCE = {
     maxHolds: 4,
     /** Hold colours, coolest first. The last one is a certain hit. */
     colors: ['white', 'blue', 'green', 'red', 'gold'] as const,
-    /** Relative weight of each colour when a hold is added, by heat stage 0..3. */
-    colorWeightsByHeat: [
-      [60, 20, 10, 7, 3],
-      [50, 24, 13, 9, 4],
-      [40, 27, 16, 12, 5],
-      [30, 30, 19, 15, 6],
-    ],
+    /**
+     * Relative weight of each colour when a hold is added. These used to rise with the heat stage; that
+     * added only 0.1-0.25 hits per round (`npm run balance -- --fever`), so heat now acts on the
+     * continue chance instead.
+     */
+    colorWeights: [60, 20, 10, 7, 3],
     /** Hit chance per colour. Red is the one near 50%, where anticipation peaks. */
     hitChance: [0.03, 0.12, 0.3, 0.5, 1],
     /** Share of misses shown with a reach (the first two digits match). Hits always reach. */
@@ -276,15 +276,22 @@ export const BALANCE = {
     /**
      * Score multiplier while FEVER runs, by chain: the hit itself, the first continuation, and so on.
      * The last value holds for longer chains, so a chain pays more the longer it runs. Chosen with
-     * `npm run balance -- --fever` (20 seeds x 50 lottery seeds, docs/DESIGN.md): with continueChance
-     * 0.4 this adds 11% (random picks) to 16% (optimum) on average and at most 47% at p95. x1.5 / x2 /
-     * x2.5 with 0.5 added 24-38% and up to 114% at p95, since a chain in the last seconds is worth most.
+     * `npm run balance -- --fever` (20 seeds x 50 lottery seeds, docs/DESIGN.md): with continueByHeat
+     * and maxChain below this adds 10% (random picks) to 15% (optimum) on average and at most 45% at
+     * p95. x1.3 / x1.6 / x2 reached 56% at p95; x1.5 / x2 / x2.5 with a flat 50% continue chance, 114%.
      */
-    chainMultipliers: [1.3, 1.6, 2],
+    chainMultipliers: [1.3, 1.5, 1.8],
     /** FEVER length per hit or continuation (sim seconds). */
     durationSec: 5,
-    /** Chance that FEVER continues for another durationSec when it runs out (0.5 made chains too valuable). */
-    continueChance: 0.4,
+    /**
+     * Chance that FEVER continues for another durationSec when it runs out, by heat stage 0..3. Centred
+     * on 50%, where anticipation peaks, and higher for a stronger line.
+     */
+    continueByHeat: [0.35, 0.42, 0.5, 0.55],
+    /** Longest chain; at this chain FEVER ends without a continue draw. Caps the luck in top scores. */
+    maxChain: 5,
+    /** Wall-clock length of the continue draw shown when FEVER runs out, during which the round is paused. */
+    continueDrawMs: 800,
     /** Wall-clock length of the hit cut-in, during which the round is paused. */
     cutInMs: 1200,
   },

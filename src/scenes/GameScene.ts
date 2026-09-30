@@ -158,6 +158,9 @@ export class GameScene extends Phaser.Scene {
   private cutInActive = false;
   /** sim.feverBonus when the current FEVER chain started, for the tally at its end. */
   private feverBonusAtStart = 0;
+  /** Heat stage and, with the lottery, the continue chance it gives; always shown under the timer. */
+  private heatText!: Phaser.GameObjects.Text;
+  private heatSub!: Phaser.GameObjects.Text;
   /** True while the TAP screen is up: nothing advances until the first tap. */
   private waitingForStart = false;
   private startOverlay: Phaser.GameObjects.Container | null = null;
@@ -234,6 +237,7 @@ export class GameScene extends Phaser.Scene {
     if (this.waitingForStart) this.buildStartOverlay();
     else needsStartTap = false;
     this.layoutMachines();
+    this.refreshHeat();
     this.refreshTexts();
     this.refreshSource();
 
@@ -404,6 +408,11 @@ export class GameScene extends Phaser.Scene {
   private onFeverEvent(e: FeverEvent): void {
     const lottery = this.sim.fever;
     if (!lottery || !this.feverFx) return;
+    // The end of a FEVER run is revealed after the continue draw (continueDraw).
+    if (e.type === 'feverContinue' || e.type === 'feverEnd') {
+      this.continueDraw(e);
+      return;
+    }
     this.feverFx.handle(e, lottery);
     switch (e.type) {
       case 'hold':
@@ -436,19 +445,47 @@ export class GameScene extends Phaser.Scene {
           },
         );
         break;
-      case 'feverContinue':
-        this.sfx.feverContinue(e.chain);
-        this.sfx.startFeverBgm(e.chain);
-        this.shake(1.5 + 0.5 * Math.min(3, e.chain - 1));
-        break;
-      case 'feverEnd':
-        this.sfx.stopFeverBgm();
-        this.sfx.feverEnd();
-        this.feverFx.showEnd(this.sim.feverBonus - this.feverBonusAtStart);
-        break;
       default:
         break;
     }
+  }
+
+  /**
+   * FEVER ran out: hold the round for the continue draw, then reveal the result the lottery already
+   * drew. At the chain cap there is no draw.
+   */
+  private continueDraw(e: Extract<FeverEvent, { type: 'feverContinue' | 'feverEnd' }>): void {
+    const lottery = this.sim.fever;
+    const fx = this.feverFx;
+    if (!lottery || !fx) return;
+    const reveal = (): void => {
+      fx.handle(e, lottery);
+      if (e.type === 'feverContinue') {
+        this.sfx.feverContinue(e.chain);
+        this.sfx.startFeverBgm(e.chain);
+        this.shake(1.5 + 0.5 * Math.min(3, e.chain - 1));
+      } else {
+        this.sfx.stopFeverBgm();
+        this.sfx.feverEnd();
+        fx.showEnd(this.sim.feverBonus - this.feverBonusAtStart);
+      }
+    };
+    if (e.type === 'feverEnd' && e.capped) {
+      reveal();
+      return;
+    }
+    const table = BALANCE.fever.continueByHeat;
+    const chance = table[Math.min(table.length - 1, this.sim.heatStage)];
+    this.cutInActive = true;
+    this.sfx.drumroll(BALANCE.fever.continueDrawMs / 1000);
+    fx.continueDraw(chance, e.type === 'feverContinue', e.type === 'feverContinue' ? e.chain - 1 : e.chain, () => {
+      if (this.ended) return;
+      this.cutInActive = false;
+      // The frame that ends the draw must not count the hold as play time.
+      this.skipNextDelta = true;
+      reveal();
+      this.checkOffer();
+    });
   }
 
   /** Shows the heat stage the simulation reached (it never drops within a round). */
@@ -475,15 +512,18 @@ export class GameScene extends Phaser.Scene {
     this.lineGfx.lineBetween(SOURCE_X, LINE_Y, BIN_X, LINE_Y);
     const flash = this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, HEAT_LINE[stage], 0.35).setDepth(40);
     this.tweens.add({ targets: flash, alpha: 0, duration: 500, onComplete: () => flash.destroy() });
-    // Under the timer, clear of the multiplier popup at the centre and of the lottery reel at the bottom.
-    const label = this.add
-      .text(40, 120, `HEAT ${stage}`, { fontFamily: FONT, fontSize: '44px', color: HEAT_POPUP[stage], fontStyle: 'bold' })
-      .setOrigin(0, 0.5)
-      .setDepth(50)
-      .setScale(0.5);
-    this.tweens.add({ targets: label, scale: 1, duration: 200, ease: 'Back.Out' });
-    this.tweens.add({ targets: label, alpha: 0, y: 90, delay: 900, duration: 700, onComplete: () => label.destroy() });
+    this.refreshHeat();
+    this.heatText.setScale(1.6);
+    this.tweens.add({ targets: this.heatText, scale: 1, duration: 300, ease: 'Back.Out' });
     this.shake(1);
+  }
+
+  /** "HEAT n" and the continue chance it gives, under the timer. */
+  private refreshHeat(): void {
+    const stage = this.heatShown;
+    this.heatText.setText(`HEAT ${stage}`).setColor(HEAT_POPUP[stage]);
+    const table = BALANCE.fever.continueByHeat;
+    this.heatSub.setText(this.sim.fever ? `CONTINUE ${Math.round(table[Math.min(table.length - 1, stage)] * 100)}%` : '');
   }
 
   /** Big "x3" in the card colour: punches in, then rises and fades. */
@@ -632,6 +672,12 @@ export class GameScene extends Phaser.Scene {
     this.timerText = this.add
       .text(40, 34, '', { fontFamily: FONT, fontSize: '44px', color: '#e8eef4', fontStyle: 'bold' })
       .setOrigin(0, 0);
+
+    // Under the timer, clear of the multiplier popup at the centre and of the lottery reel at the bottom.
+    this.heatText = this.add
+      .text(40, 104, '', { fontFamily: FONT, fontSize: '30px', color: HEAT_POPUP[0], fontStyle: 'bold' })
+      .setOrigin(0, 0);
+    this.heatSub = this.add.text(40, 140, '', { fontFamily: FONT, fontSize: '20px', color: '#9fb3c8' }).setOrigin(0, 0);
 
     this.scoreText = this.add
       .text(WIDTH / 2, 130, '0', { fontFamily: FONT, fontSize: '112px', color: '#ffffff', fontStyle: 'bold' })

@@ -23,7 +23,7 @@ export interface StepResult {
 export interface SimulationOptions {
   /** Seed for the fever lottery. Omitted: no lottery (the balance brute force runs without one). */
   feverSeed?: number;
-  /** Keep `rate` and `heatStage` up to date every step (costs one extra pass over the line per step). */
+  /** Keep `rate` and `heatStage` up to date every step (costs up to two extra passes over the line per step). */
   trackHeat?: boolean;
 }
 
@@ -77,11 +77,16 @@ export class Simulation {
     this.trackHeat = options.trackHeat === true || this.fever !== null;
   }
 
-  /** Records a score rate (e.g. right after a pick) and raises the heat stage when it passes a threshold. */
+  /**
+   * Records the score rate (e.g. right after a pick) and raises the heat stage when the rate without the
+   * boost passes a threshold.
+   */
   noteRate(rate: number): void {
     this.rate = rate;
     const t = BALANCE.heat.thresholds;
-    while (this.heatStage < t.length && rate >= t[this.heatStage]) this.heatStage += 1;
+    if (this.heatStage >= t.length) return;
+    const base = this.baseScoreRate;
+    while (this.heatStage < t.length && base >= t[this.heatStage]) this.heatStage += 1;
   }
 
   /** Elapsed simulation time. One multiplication, so offer times and the round end compare exactly. */
@@ -136,6 +141,17 @@ export class Simulation {
     const bySpeed = speed.scalesPressBudget ? speed.multiplier ** this.speedCount : 1;
     const byBoost = this.accel.scalesPressBudget ? this.boostMultiplier : 1;
     return bySpeed * byBoost;
+  }
+
+  /**
+   * Score per second the build produces without the ACCEL boost (no state is changed). Heat is judged
+   * on this, so a stage is earned by the line itself, not by a moment of boost.
+   */
+  get baseScoreRate(): number {
+    const speed = BALANCE.machines.speed;
+    const bySpeed = speed.scalesPressBudget ? speed.multiplier ** this.speedCount : 1;
+    const groups = this.runLine([{ count: this.baseRate, value: BALANCE.production.baseValue }], 1, bySpeed, false, false);
+    return groups.reduce((s, g) => s + g.count * g.value, 0);
   }
 
   /** Score per second at the end of the line right now (no state is changed). */

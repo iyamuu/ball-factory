@@ -23,6 +23,7 @@ export type SfxName =
   | 'feverContinue'
   | 'feverEnd'
   | 'feverBgm'
+  | 'drumroll'
   | 'end'
   | 'fanfare';
 
@@ -87,6 +88,7 @@ export class Sfx {
     feverContinue: 0,
     feverEnd: 0,
     feverBgm: 0,
+    drumroll: 0,
     end: 0,
     fanfare: 0,
   };
@@ -288,6 +290,20 @@ export class Sfx {
       ...[1047, 1319, 1568].map((f) => ({ freq: f * lift, dur: 0.5, at: 0.35, wave: 'triangle' as Wave, gain: 0.16 })),
     ]);
     this.crash(0, 0.9, 0.3);
+  }
+
+  /** Continue draw: a snare roll that speeds up and rises over `sec` seconds. */
+  drumroll(sec: number): void {
+    this.count('drumroll');
+    const n = 16;
+    const notes: Note[] = [];
+    for (let i = 0; i < n; i++) {
+      // Gaps shrink towards the end, so the roll accelerates into the result.
+      const at = sec * (1 - Math.pow(1 - i / n, 0.6));
+      notes.push({ freq: 220 * Math.pow(2, i / n), dur: 0.04, at, wave: 'square', gain: 0.1 });
+      this.crash(at, 0.04, 0.08);
+    }
+    this.play(notes);
   }
 
   /**

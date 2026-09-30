@@ -86,7 +86,7 @@ const VARIANTS: Variant[] = [
 
 // ---------------------------------------------------------------- play
 
-/** Score rate trace of one play: the peak and the rate at a few sim times (for fever thresholds). */
+/** Base score rate (without the ACCEL boost) of one play: the peak and the rate at a few sim times (for heat thresholds). */
 interface RateTrace {
   peak: number;
   at: Record<number, number>;
@@ -104,7 +104,7 @@ function play(offers: Offer[], choose: Chooser, trace?: RateTrace, sim = new Sim
     }
     sim.step();
     if (trace) {
-      const r = sim.scoreRate;
+      const r = sim.baseScoreRate;
       trace.peak = Math.max(trace.peak, r);
       for (const t of TRACE_TIMES) if (Math.abs(sim.timeSec - t) < sim.stepSec / 2) trace.at[t] = r;
     }
