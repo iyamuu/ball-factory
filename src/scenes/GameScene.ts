@@ -156,6 +156,8 @@ export class GameScene extends Phaser.Scene {
   private feverFx: FeverFx | null = null;
   /** True while the FEVER cut-in plays: the round is held like during an offer, without the panel. */
   private cutInActive = false;
+  /** sim.feverBonus when the current FEVER chain started, for the tally at its end. */
+  private feverBonusAtStart = 0;
   /** True while the TAP screen is up: nothing advances until the first tap. */
   private waitingForStart = false;
   private startOverlay: Phaser.GameObjects.Container | null = null;
@@ -211,6 +213,8 @@ export class GameScene extends Phaser.Scene {
     // counters start again.
     this.sfx ??= new Sfx(RUNTIME.sound ?? loadSoundEnabled() ?? BALANCE.sound.enabled);
     this.sfx.resetCounts();
+    this.sfx.stopFeverBgm();
+    this.feverBonusAtStart = 0;
     // Browsers allow audio only after a user gesture. The capture-phase DOM listeners run before
     // Phaser dispatches the same event to a card or button, so the first tap's sound plays too.
     this.sfx.bindUnlock(this.game.canvas);
@@ -419,11 +423,13 @@ export class GameScene extends Phaser.Scene {
       case 'feverStart':
         this.sfx.feverHit();
         this.cutInActive = true;
+        this.feverBonusAtStart = this.sim.feverBonus;
         this.feverFx.cutIn(
           (s) => this.shake(s),
           () => {
             if (this.ended) return;
             this.cutInActive = false;
+            this.sfx.startFeverBgm(1);
             // The frame that ends the cut-in must not count the hold as play time.
             this.skipNextDelta = true;
             this.checkOffer();
@@ -432,10 +438,13 @@ export class GameScene extends Phaser.Scene {
         break;
       case 'feverContinue':
         this.sfx.feverContinue(e.chain);
-        this.shake(1.5);
+        this.sfx.startFeverBgm(e.chain);
+        this.shake(1.5 + 0.5 * Math.min(3, e.chain - 1));
         break;
       case 'feverEnd':
+        this.sfx.stopFeverBgm();
         this.sfx.feverEnd();
+        this.feverFx.showEnd(this.sim.feverBonus - this.feverBonusAtStart);
         break;
       default:
         break;
@@ -542,6 +551,7 @@ export class GameScene extends Phaser.Scene {
 
   private endRound(): void {
     this.ended = true;
+    this.sfx.stopFeverBgm();
     this.panel.hide();
     this.pendingGainPopup = 0;
     const score = Math.floor(this.sim.score);
@@ -574,6 +584,7 @@ export class GameScene extends Phaser.Scene {
   private retry(): void {
     if (this.ended) return;
     this.ended = true;
+    this.sfx.stopFeverBgm();
     this.panel.hide();
     recordRound(this.roundRecord(true));
     this.scene.restart();

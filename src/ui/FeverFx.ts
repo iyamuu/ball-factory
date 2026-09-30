@@ -1,8 +1,9 @@
 import Phaser from 'phaser';
 import { BALANCE } from '../config/balance';
-import type { FeverEvent, FeverLottery, HoldColor } from '../game/fever';
+import { chainMultiplier, type FeverEvent, type FeverLottery, type HoldColor } from '../game/fever';
 import { WIDTH, HEIGHT } from '../main';
 import { FONT } from './icons';
+import { FEVER_BPM } from '../audio/sfx';
 
 /** Hold and reel frame colour per hold colour. */
 export const HOLD_COLORS: Record<HoldColor, number> = {
@@ -110,9 +111,16 @@ export class FeverFx {
   private reel: Phaser.GameObjects.Container;
   /** Spin offsets per digit so the three do not roll in step. */
   private spinOffset = [0, 3, 6];
+  /** Rainbow frame around the screen and a colour wash behind the line, both only during FEVER. */
+  private aura: Phaser.GameObjects.Graphics;
+  private wash: Phaser.GameObjects.Rectangle;
+  /** Wall-clock seconds since FEVER started, for the beat pulse (same tempo as the FEVER music). */
+  private beatClock = 0;
 
   constructor(private scene: Phaser.Scene) {
     this.reachDim = scene.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x000000, 0).setDepth(88);
+    this.wash = scene.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0xffffff, 0).setDepth(-10);
+    this.aura = scene.add.graphics().setDepth(87);
     this.reel = scene.add.container(0, 0).setDepth(95);
     // WIDTH comes from main.ts, which imports the scene that imports this file: read it here, not at module load.
     const holdX0 = WIDTH / 2 - (DIGIT_W * 1.5 + DIGIT_GAP) - HOLD_INSET;
@@ -157,10 +165,11 @@ export class FeverFx {
     });
 
     const fever = lottery.feverActive;
+    this.drawAura(fever ? lottery.chain : 0, dtSec);
     this.reel.setVisible(!fever);
     this.badgeInfo.setVisible(fever);
     if (fever) {
-      this.badgeInfo.setText(`${lottery.feverRemainingSec.toFixed(1)}s  x${BALANCE.fever.scoreMultiplier}${lottery.chain > 1 ? `  ${lottery.chain} CHAIN` : ''}`);
+      this.badgeInfo.setText(`${lottery.feverRemainingSec.toFixed(1)}s  x${chainMultiplier(lottery.chain)}${lottery.chain > 1 ? `  ${lottery.chain} CHAIN` : ''}`);
     }
 
     const d = lottery.draw;
@@ -222,11 +231,17 @@ export class FeverFx {
       case 'result':
         if (e.hit) for (const b of this.digits) this.scene.tweens.add({ targets: b.text, scale: 1.4, duration: 120, yoyo: true });
         break;
-      case 'feverContinue':
-        this.slam('CONTINUE!', 110, HEIGHT / 2 - 40, 900);
-        this.sparkle(WIDTH / 2, HEIGHT / 2 - 40, 18, 360);
+      case 'feverContinue': {
+        // Bigger for every chain: text size, stars, shockwaves and a white flash.
+        const k = Math.min(4, e.chain - 1);
+        this.flash(0.35 + 0.1 * k);
+        this.slam(`${e.chain} CHAIN!`, 100 + 14 * k, HEIGHT / 2 - 70, 1000);
+        this.slam(`x${chainMultiplier(e.chain)}`, 90 + 10 * k, HEIGHT / 2 + 60, 1000);
+        this.sparkle(WIDTH / 2, HEIGHT / 2 - 20, 18 + 8 * k, 360 + 60 * k);
+        this.shockwave(WIDTH / 2, HEIGHT / 2 - 20, 1 + Math.min(2, k));
         this.showBadge();
         break;
+      }
       case 'feverEnd':
         this.hideBadge();
         break;
@@ -262,6 +277,7 @@ export class FeverFx {
     s.tweens.add({ targets: flash, alpha: 0, duration: 260, onComplete: () => flash.destroy() });
 
     const title = this.track(new RainbowText(s, cx, cy, 'FEVER!!', 190).setDepth(160).setScale(3).setAlpha(0));
+    const mult = this.track(new RainbowText(s, cx, cy + 150, `x${chainMultiplier(1)}`, 80).setDepth(160).setAlpha(0));
     s.tweens.add({
       targets: title,
       scale: 1,
@@ -270,22 +286,103 @@ export class FeverFx {
       ease: 'Cubic.In',
       onComplete: () => {
         shake(4);
-        this.sparkle(cx, cy, 28, 520);
+        this.sparkle(cx, cy, 40, 600);
+        this.shockwave(cx, cy, 2);
         s.tweens.add({ targets: title, scale: 1.08, duration: 90, yoyo: true, ease: 'Quad.Out' });
+        mult.setScale(2.4);
+        s.tweens.add({ targets: mult, scale: 1, alpha: 1, delay: 120, duration: 140, ease: 'Cubic.In' });
       },
     });
 
     s.time.delayedCall(total - 260, () => {
       s.tweens.add({ targets: [dim, rays], alpha: 0, duration: 240 });
-      s.tweens.add({ targets: title, scale: 0.3, y: REEL_Y, alpha: 0, duration: 240, ease: 'Cubic.In' });
+      s.tweens.add({ targets: [title, mult], scale: 0.3, y: REEL_Y, alpha: 0, duration: 240, ease: 'Cubic.In' });
     });
     s.time.delayedCall(total, () => {
       dim.destroy();
       rays.destroy();
       this.untrack(title);
+      this.untrack(mult);
+      this.beatClock = 0;
       this.showBadge();
       onDone();
     });
+  }
+
+  /** FEVER is over: the score it added, in gold, in the middle (clear of the REACH label if a draw follows). */
+  showEnd(bonus: number): void {
+    const t = this.scene.add
+      .text(WIDTH / 2, 320, `FEVER +${Math.floor(bonus).toLocaleString('en-US')}`, {
+        fontFamily: FONT,
+        fontSize: '48px',
+        color: '#ffd54f',
+        fontStyle: 'italic bold',
+      })
+      .setOrigin(0.5)
+      .setStroke('#2a1400', 8)
+      .setDepth(97)
+      .setScale(0.5);
+    this.scene.tweens.add({ targets: t, scale: 1, duration: 200, ease: 'Back.Out' });
+    this.scene.tweens.add({ targets: t, alpha: 0, y: t.y - 40, delay: 1400, duration: 500, onComplete: () => t.destroy() });
+  }
+
+  /**
+   * FEVER aura, redrawn every frame: a rainbow frame around the screen and a colour wash behind the
+   * line, both pulsing on each beat of the FEVER music. Thicker and brighter for each chain.
+   */
+  private drawAura(chain: number, dtSec: number): void {
+    const g = this.aura;
+    g.clear();
+    if (chain <= 0) {
+      this.wash.setFillStyle(0xffffff, 0);
+      return;
+    }
+    this.beatClock += dtSec;
+    const beat = (this.beatClock * FEVER_BPM) / 60;
+    const pulse = Math.exp(-4 * (beat % 1)); // 1 on the beat, decaying to ~0 before the next
+    const k = Math.min(3, chain);
+    const w = 8 + 6 * k + 10 * pulse;
+    const segments = 24;
+    // Four edges, each split into segments that walk the rainbow, so the colour runs around the frame.
+    // Inset by half the width so the whole stroke is on screen.
+    const i0 = w / 2;
+    const edges: [number, number, number, number][] = [
+      [i0, i0, WIDTH - i0, i0],
+      [WIDTH - i0, i0, WIDTH - i0, HEIGHT - i0],
+      [WIDTH - i0, HEIGHT - i0, i0, HEIGHT - i0],
+      [i0, HEIGHT - i0, i0, i0],
+    ];
+    edges.forEach(([x0, y0, x1, y1], e) => {
+      for (let i = 0; i < segments; i++) {
+        const t0 = i / segments;
+        const t1 = (i + 1) / segments;
+        g.lineStyle(w, this.rainbowAt((e + t0) / 4), 0.7 + 0.3 * pulse);
+        g.lineBetween(x0 + (x1 - x0) * t0, y0 + (y1 - y0) * t0, x0 + (x1 - x0) * t1, y0 + (y1 - y0) * t1);
+      }
+    });
+    this.wash.setFillStyle(this.rainbowAt(0), 0.04 * k + 0.06 * pulse);
+    if (this.badge) this.badge.setScale(1 + 0.06 * pulse);
+  }
+
+  /** Expanding rings from (x, y). */
+  private shockwave(x: number, y: number, rings: number): void {
+    for (let i = 0; i < rings; i++) {
+      const ring = this.scene.add.circle(x, y, 60, 0x000000, 0).setStrokeStyle(10, 0xffffff, 0.9).setDepth(158);
+      this.scene.tweens.add({
+        targets: ring,
+        scale: 9,
+        alpha: 0,
+        delay: i * 110,
+        duration: 650,
+        ease: 'Cubic.Out',
+        onComplete: () => ring.destroy(),
+      });
+    }
+  }
+
+  private flash(alpha: number): void {
+    const f = this.scene.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0xffffff, alpha).setDepth(155);
+    this.scene.tweens.add({ targets: f, alpha: 0, duration: 220, onComplete: () => f.destroy() });
   }
 
   private showBadge(): void {

@@ -274,15 +274,17 @@ export const BALANCE = {
     leftStopSec: 1.0,
     rightStopSec: 1.5,
     /**
-     * Score multiplier while FEVER runs. Chosen with `npm run balance -- --fever` (10 seeds x 50
-     * lottery seeds): x2 added 35% on average to simple-rule rounds and 81% at p95; x1.5 adds 14%
-     * (random picks) to 21% (optimum) on average and at most 44% at p95.
+     * Score multiplier while FEVER runs, by chain: the hit itself, the first continuation, and so on.
+     * The last value holds for longer chains, so a chain pays more the longer it runs. Chosen with
+     * `npm run balance -- --fever` (20 seeds x 50 lottery seeds, docs/DESIGN.md): with continueChance
+     * 0.4 this adds 11% (random picks) to 16% (optimum) on average and at most 47% at p95. x1.5 / x2 /
+     * x2.5 with 0.5 added 24-38% and up to 114% at p95, since a chain in the last seconds is worth most.
      */
-    scoreMultiplier: 1.5,
+    chainMultipliers: [1.3, 1.6, 2],
     /** FEVER length per hit or continuation (sim seconds). */
     durationSec: 5,
-    /** Chance that FEVER continues for another durationSec when it runs out. */
-    continueChance: 0.5,
+    /** Chance that FEVER continues for another durationSec when it runs out (0.5 made chains too valuable). */
+    continueChance: 0.4,
     /** Wall-clock length of the hit cut-in, during which the round is paused. */
     cutInMs: 1200,
   },

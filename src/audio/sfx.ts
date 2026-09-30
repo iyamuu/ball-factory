@@ -22,6 +22,7 @@ export type SfxName =
   | 'feverHit'
   | 'feverContinue'
   | 'feverEnd'
+  | 'feverBgm'
   | 'end'
   | 'fanfare';
 
@@ -29,6 +30,25 @@ type Wave = OscillatorType;
 
 /** A sound requested before the context ran is still played if the context starts within this time. */
 const PENDING_MAX_MS = 400;
+
+/** FEVER music tempo. FeverFx pulses the screen at the same tempo. */
+export const FEVER_BPM = 150;
+/** Length of one sixteenth note of the FEVER music, in seconds. */
+const STEP_SEC = 60 / FEVER_BPM / 4;
+/** How far ahead the FEVER music is scheduled, and how often the scheduler runs. */
+const BGM_AHEAD_SEC = 0.15;
+const BGM_TICK_MS = 40;
+/** Chord roots per bar (C, G, A minor, F), as semitones above C. */
+const BGM_ROOTS = [0, 7, 9, 5];
+/** Chord tones per bar, as semitones above the root (major, major, minor, major). */
+const BGM_CHORDS = [
+  [0, 4, 7, 12],
+  [0, 4, 7, 12],
+  [0, 3, 7, 12],
+  [0, 4, 7, 12],
+];
+/** Lead line for chain 3 and up: one note per eighth (null = rest), semitones above the bar root + 12. */
+const BGM_LEAD: (number | null)[] = [12, null, 7, 12, 16, null, 12, 7];
 
 interface Note {
   /** Start frequency in Hz. */
@@ -66,11 +86,18 @@ export class Sfx {
     feverHit: 0,
     feverContinue: 0,
     feverEnd: 0,
+    feverBgm: 0,
     end: 0,
     fanfare: 0,
   };
 
   private bound = false;
+  /** FEVER music: scheduler handle, next step to schedule, its audio time, and the layer level (chain). */
+  private bgmTimer: ReturnType<typeof setInterval> | null = null;
+  private bgmStep = 0;
+  private bgmNextAt = 0;
+  private bgmLevel = 1;
+  private noise: AudioBuffer | null = null;
 
   constructor(public enabled: boolean) {}
 
@@ -236,25 +263,115 @@ export class Sfx {
     this.play([{ freq: 330, to: 220, dur: 0.18, wave: 'triangle', gain: 0.16 }]);
   }
 
-  /** FEVER hit: impact, a fast rising run and a held major chord. */
+  /** FEVER hit: impact with a cymbal crash, a fast rising run and a held major chord in three layers. */
   feverHit(): void {
     this.count('feverHit');
-    const run = [523, 659, 784, 1047, 1319, 1568];
+    const run = [523, 659, 784, 1047, 1319, 1568, 2093];
     this.play([
-      { freq: 90, to: 40, dur: 0.35, wave: 'sine', gain: 0.5 },
-      { freq: 200, to: 1600, dur: 0.2, wave: 'sawtooth', gain: 0.12 },
-      ...run.map((freq, i) => ({ freq, dur: 0.1, at: 0.18 + i * 0.06, wave: 'square' as Wave, gain: 0.16 })),
-      { freq: 1047, dur: 0.6, at: 0.56, wave: 'triangle', gain: 0.22 },
-      { freq: 1319, dur: 0.6, at: 0.56, wave: 'triangle', gain: 0.18 },
-      { freq: 1568, dur: 0.6, at: 0.56, wave: 'triangle', gain: 0.18 },
+      { freq: 110, to: 35, dur: 0.5, wave: 'sine', gain: 0.6 },
+      { freq: 200, to: 2400, dur: 0.22, wave: 'sawtooth', gain: 0.12 },
+      ...run.map((freq, i) => ({ freq, dur: 0.1, at: 0.16 + i * 0.05, wave: 'square' as Wave, gain: 0.15 })),
+      ...[1047, 1319, 1568, 2093].map((freq) => ({ freq, dur: 0.75, at: 0.52, wave: 'triangle' as Wave, gain: 0.16 })),
+      ...[523, 659, 784].map((freq) => ({ freq, dur: 0.75, at: 0.52, wave: 'sawtooth' as Wave, gain: 0.06 })),
     ]);
+    this.crash(0, 1.2, 0.35);
+    this.crash(0.52, 0.9, 0.25);
   }
 
-  /** FEVER continues: arpeggio, a step higher for each chain. */
+  /** FEVER continues: crash and a rising arpeggio, a whole tone higher for each chain. */
   feverContinue(chain: number): void {
     this.count('feverContinue');
     const lift = Math.pow(1.122, Math.min(6, chain - 1));
-    this.play([659, 784, 988, 1319].map((f, i) => ({ freq: f * lift, dur: 0.12, at: i * 0.07, wave: 'square' as Wave, gain: 0.18 })));
+    this.play([
+      { freq: 90, to: 40, dur: 0.3, wave: 'sine', gain: 0.5 },
+      ...[523, 659, 784, 1047, 1319].map((f, i) => ({ freq: f * lift, dur: 0.12, at: 0.05 + i * 0.06, wave: 'square' as Wave, gain: 0.17 })),
+      ...[1047, 1319, 1568].map((f) => ({ freq: f * lift, dur: 0.5, at: 0.35, wave: 'triangle' as Wave, gain: 0.16 })),
+    ]);
+    this.crash(0, 0.9, 0.3);
+  }
+
+  /**
+   * Starts the FEVER music (or changes its layers when already playing). `level` is the chain:
+   * 1 = kick, bass and arpeggio; 2 adds hi-hats; 3 and up add a lead. Each level is a whole tone higher.
+   */
+  startFeverBgm(level: number): void {
+    this.bgmLevel = Math.max(1, level);
+    if (this.bgmTimer !== null) return;
+    this.count('feverBgm');
+    if (!this.ctx) return;
+    this.bgmStep = 0;
+    this.bgmNextAt = this.ctx.currentTime + 0.05;
+    this.bgmTimer = setInterval(() => this.scheduleBgm(), BGM_TICK_MS);
+    this.scheduleBgm();
+  }
+
+  stopFeverBgm(): void {
+    if (this.bgmTimer !== null) clearInterval(this.bgmTimer);
+    this.bgmTimer = null;
+  }
+
+  /** Schedules the FEVER music steps that fall inside the look-ahead window. */
+  private scheduleBgm(): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running') return;
+    // After a stall (background tab) skip ahead instead of playing the missed steps at once.
+    if (this.bgmNextAt < ctx.currentTime - 0.2) this.bgmNextAt = ctx.currentTime + 0.02;
+    while (this.bgmNextAt < ctx.currentTime + BGM_AHEAD_SEC) {
+      if (this.enabled) this.bgmStepNotes(this.bgmStep, this.bgmNextAt - ctx.currentTime);
+      this.bgmStep = (this.bgmStep + 1) % 64;
+      this.bgmNextAt += STEP_SEC;
+    }
+  }
+
+  private bgmStepNotes(step: number, at: number): void {
+    const level = this.bgmLevel;
+    const bar = Math.floor(step / 16);
+    const s = step % 16;
+    const shift = 2 * Math.min(4, level - 1);
+    const note = (semi: number, base: number): number => base * Math.pow(2, (semi + shift) / 12);
+    const root = BGM_ROOTS[bar];
+    const notes: Note[] = [];
+    if (s % 4 === 0) notes.push({ freq: 150, to: 42, dur: 0.14, at, wave: 'sine', gain: 0.5 });
+    if (s % 4 === 2) notes.push({ freq: note(root, 65.41), dur: STEP_SEC * 1.8, at, wave: 'sawtooth', gain: 0.14 });
+    const chord = BGM_CHORDS[bar];
+    notes.push({ freq: note(root + chord[s % 4], 523.25), dur: STEP_SEC * 0.9, at, wave: 'triangle', gain: 0.07 });
+    if (level >= 3 && s % 2 === 0) {
+      const lead = BGM_LEAD[s / 2];
+      if (lead !== null) notes.push({ freq: note(root + lead, 261.63), dur: STEP_SEC * 1.8, at, wave: 'square', gain: 0.06 });
+    }
+    this.play(notes);
+    if (level >= 2 && s % 2 === 0) this.crash(at, 0.05, s % 4 === 2 ? 0.1 : 0.05);
+  }
+
+  /** Band-passed noise burst: a cymbal crash when long, a hi-hat when short. */
+  private crash(at: number, dur: number, gain: number): void {
+    const ctx = this.ctx;
+    if (!this.enabled || !ctx || !this.master || ctx.state !== 'running') return;
+    try {
+      if (!this.noise) {
+        const len = Math.floor(ctx.sampleRate * 1.5);
+        this.noise = ctx.createBuffer(1, len, ctx.sampleRate);
+        const data = this.noise.getChannelData(0);
+        for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise;
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 5000;
+      const env = ctx.createGain();
+      const start = ctx.currentTime + at;
+      env.gain.setValueAtTime(0.0001, start);
+      env.gain.exponentialRampToValueAtTime(gain, start + 0.005);
+      env.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+      src.connect(filter);
+      filter.connect(env);
+      env.connect(this.master);
+      src.start(start);
+      src.stop(start + dur + 0.02);
+    } catch {
+      // audio failure is never a game failure
+    }
   }
 
   /** FEVER over: falling three notes. */

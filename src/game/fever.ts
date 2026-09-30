@@ -33,11 +33,17 @@ export type FeverEvent =
 
 const F = BALANCE.fever;
 
+/** Score multiplier of the given FEVER chain (1 = the hit). Longer chains keep the last value. */
+export function chainMultiplier(chain: number): number {
+  const m = F.chainMultipliers;
+  return m[Math.max(0, Math.min(m.length - 1, chain - 1))];
+}
+
 /**
  * Fever lottery, pure and deterministic for a given seed and sequence of calls.
  *
  * Every score milestone (milestoneBase * milestoneGrowth^k) adds a hold, up to maxHolds. When no draw
- * and no FEVER is running, the next hold is drawn; a hit starts FEVER (score x scoreMultiplier for
+ * and no FEVER is running, the next hold is drawn; a hit starts FEVER (score x chainMultiplier(chain) for
  * durationSec), and each time FEVER runs out it continues with continueChance. Holds added during a
  * draw or FEVER wait. Everything runs on sim time, so offers pause it with the rest of the round.
  */
@@ -71,7 +77,7 @@ export class FeverLottery {
   }
 
   get multiplier(): number {
-    return this.feverActive ? F.scoreMultiplier : 1;
+    return this.feverActive ? chainMultiplier(this.chain) : 1;
   }
 
   /** Score at which the next hold is added. */
