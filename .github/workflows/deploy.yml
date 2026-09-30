@@ -56,6 +56,8 @@ jobs:
           npm ci
           # Marks preview rounds in the telemetry sheet with the preview commit (github.sha is main's).
           VITE_BUILD="preview-$(git rev-parse HEAD)" npm run build -- --base=/ball-factory/preview/
+          # Lets anyone check which preview commit is live (README: a push without the trigger deploys nothing).
+          git rev-parse HEAD > dist/version.txt
         env:
           VITE_TELEMETRY_URL: ${{ vars.TELEMETRY_URL }}
       - uses: actions/upload-artifact@v4
