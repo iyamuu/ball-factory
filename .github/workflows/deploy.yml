@@ -1,5 +1,11 @@
 name: Deploy to GitHub Pages
 
+# One Pages site holds two builds:
+#   https://<owner>.github.io/ball-factory/          main
+#   https://<owner>.github.io/ball-factory/preview/  the `preview` branch, if it exists
+# A push to `preview` does not deploy by itself (the github-pages environment only accepts main);
+# preview-trigger.yml on that branch starts this workflow on main instead.
+
 on:
   push:
     branches: [main]
@@ -15,9 +21,59 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The preview branch is not reviewed, so its install and build scripts run in a job of their own,
+  # with read-only permissions and no stored git credentials. Only the files it builds are handed
+  # on, and they land under dist/preview; nothing it runs can touch the main build.
+  preview:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      built: ${{ steps.check.outputs.exists }}
+    steps:
+      - name: Check for a preview branch
+        id: check
+        run: |
+          if gh api "repos/$GITHUB_REPOSITORY/branches/preview" --silent 2> /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          ref: preview
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          node-version: 22
+      - name: Build preview
+        if: steps.check.outputs.exists == 'true'
+        run: |
+          npm ci
+          # Marks preview rounds in the telemetry sheet with the preview commit (github.sha is main's).
+          VITE_BUILD="preview-$(git rev-parse HEAD)" npm run build -- --base=/ball-factory/preview/
+          # Lets anyone check which preview commit is live (README: a push without the trigger deploys nothing).
+          git rev-parse HEAD > dist/version.txt
+        env:
+          VITE_TELEMETRY_URL: ${{ vars.TELEMETRY_URL }}
+      - uses: actions/upload-artifact@v4
+        if: steps.check.outputs.exists == 'true'
+        with:
+          name: preview-dist
+          path: dist
+          retention-days: 1
+
   build:
+    needs: preview
+    # A failed preview build must not block deploying main; the site then goes out without /preview/.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
+      # Default ref: the commit this run was started for, so the build matches VITE_BUILD below.
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -29,6 +85,11 @@ jobs:
           # Round telemetry endpoint (docs/TELEMETRY.md). Unset variable: nothing is sent.
           VITE_TELEMETRY_URL: ${{ vars.TELEMETRY_URL }}
           VITE_BUILD: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        if: needs.preview.result == 'success' && needs.preview.outputs.built == 'true'
+        with:
+          name: preview-dist
+          path: dist/preview
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
@@ -36,6 +97,8 @@ jobs:
 
   deploy:
     needs: build
+    # Stated explicitly: without it a failed preview job, two levels up, would skip the deploy too.
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages
