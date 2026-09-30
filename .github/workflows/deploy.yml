@@ -1,5 +1,11 @@
 name: Deploy to GitHub Pages
 
+# One Pages site holds two builds:
+#   https://<owner>.github.io/ball-factory/          main
+#   https://<owner>.github.io/ball-factory/preview/  the `preview` branch, if it exists
+# A push to `preview` does not deploy by itself (the github-pages environment only accepts main);
+# preview-trigger.yml on that branch starts this workflow on main instead.
+
 on:
   push:
     branches: [main]
@@ -19,6 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -29,6 +37,33 @@ jobs:
           # Round telemetry endpoint (docs/TELEMETRY.md). Unset variable: nothing is sent.
           VITE_TELEMETRY_URL: ${{ vars.TELEMETRY_URL }}
           VITE_BUILD: ${{ github.sha }}
+
+      - name: Check for a preview branch
+        id: preview
+        run: |
+          if git ls-remote --exit-code --heads origin preview > /dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.preview.outputs.exists == 'true'
+        with:
+          ref: preview
+          path: preview-src
+      - name: Build preview into dist/preview
+        if: steps.preview.outputs.exists == 'true'
+        working-directory: preview-src
+        run: |
+          npm ci
+          npm run build -- --base=/ball-factory/preview/
+          mkdir -p ../dist/preview
+          cp -r dist/. ../dist/preview/
+        env:
+          VITE_TELEMETRY_URL: ${{ vars.TELEMETRY_URL }}
+          # Marks preview rounds in the telemetry sheet.
+          VITE_BUILD: preview-${{ github.sha }}
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

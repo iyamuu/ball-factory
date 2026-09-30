@@ -35,6 +35,11 @@ https://<owner>.github.io/ball-factory/
 
 For this repository: https://iyamuu.github.io/ball-factory/
 
+Preview without merging: push a branch to `preview` (for example `git push -f origin my-branch:preview`).
+`.github/workflows/preview-trigger.yml` then redeploys the site from `main`, and `deploy.yml` also builds
+the `preview` branch into https://iyamuu.github.io/ball-factory/preview/. Both builds share the browser
+storage of the site (best score, speed, sound).
+
 ## Tuning
 
 All gameplay numbers (round length, base production, card timing, machine effects, screen shake) live in

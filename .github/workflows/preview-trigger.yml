@@ -1,0 +1,19 @@
+name: Deploy preview
+
+# A push to `preview` redeploys the Pages site from main, which also builds this branch into
+# /ball-factory/preview/ (deploy.yml). workflow_dispatch is one of the events GITHUB_TOKEN may start.
+
+on:
+  push:
+    branches: [preview]
+
+permissions:
+  actions: write
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    steps:
+      - run: gh workflow run deploy.yml --ref main --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
