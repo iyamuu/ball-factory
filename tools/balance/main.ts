@@ -331,9 +331,9 @@ function runRates(): void {
 function runFever(): void {
   const LOTTERY_SEEDS = 50;
   const q = (xs: number[], p: number): number => [...xs].sort((a, b) => a - b)[Math.min(xs.length - 1, Math.floor(xs.length * p))];
-  const groups: Record<string, { bonus: number[]; draws: number[]; hits: number[]; feverSec: number[]; chain: number[] }> = {};
+  const groups: Record<string, { bonus: number[]; draws: number[]; hits: number[]; feverSec: number[]; chain: number[]; checks: number[] }> = {};
   const add = (label: string, offers: Offer[], picks: MachineId[]): void => {
-    const g = (groups[label] ??= { bonus: [], draws: [], hits: [], feverSec: [], chain: [] });
+    const g = (groups[label] ??= { bonus: [], draws: [], hits: [], feverSec: [], chain: [], checks: [0, 0, 0, 0] });
     let k = 0;
     const base = play(offers, () => picks[k++]);
     for (let i = 0; i < LOTTERY_SEEDS; i++) {
@@ -346,6 +346,7 @@ function runFever(): void {
       g.hits.push(f.hits);
       g.feverSec.push(f.feverSec);
       g.chain.push(f.longestChain);
+      f.continueChecks.forEach((n, h) => (g.checks[h] += n));
     }
   };
   const record = (offers: Offer[], choose: Chooser): MachineId[] => {
@@ -369,6 +370,10 @@ function runFever(): void {
   console.log(`\n## fever lottery, ${SEEDS.length} seeds x ${LOTTERY_SEEDS} lottery seeds\n`);
   console.log('| player | bonus mean | p50 | p95 | max | no hit | draws mean | hits mean | fever s mean | longest chain p95 |');
   console.log('|---|---|---|---|---|---|---|---|---|---|');
+  for (const [label, g] of Object.entries(groups)) {
+    const tot = g.checks.reduce((a, b) => a + b, 0) || 1;
+    console.log(`  ${label}: continuation checks by heat 0/1/2/3 = ${g.checks.map((n) => pct(n / tot)).join(' / ')}; chain>=3 rounds ${pct(g.chain.filter((c) => c >= 3).length / g.chain.length)}`);
+  }
   for (const [label, g] of Object.entries(groups)) {
     const noHit = g.hits.filter((h) => h === 0).length / g.hits.length;
     console.log(

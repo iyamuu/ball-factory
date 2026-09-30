@@ -234,6 +234,8 @@ export const BALANCE = {
      * Heat changes the colours and raises the share of hot holds in the fever lottery (below).
      */
     thresholds: [30, 150, 1000],
+    /** EXPERIMENT: judge the stage on the score rate without the ACCEL boost. */
+    excludeBoost: false as boolean,
   },
 
   /**
@@ -285,6 +287,12 @@ export const BALANCE = {
     durationSec: 5,
     /** Chance that FEVER continues for another durationSec when it runs out (0.5 made chains too valuable). */
     continueChance: 0.4,
+    /** EXPERIMENT: continue chance by heat stage 0..3 (null: continueChance). */
+    continueByHeat: null as number[] | null,
+    /** EXPERIMENT: false = holds ignore heat (stage 0 weights). */
+    heatHolds: true as boolean,
+    /** EXPERIMENT: longest chain (0 = no cap). */
+    maxChain: 0 as number,
     /** Wall-clock length of the hit cut-in, during which the round is paused. */
     cutInMs: 1200,
   },

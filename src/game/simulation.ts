@@ -138,6 +138,14 @@ export class Simulation {
     return bySpeed * byBoost;
   }
 
+  /** Score rate without the ACCEL boost (what the build produces on its own). */
+  get baseScoreRate(): number {
+    const speed = BALANCE.machines.speed;
+    const bySpeed = speed.scalesPressBudget ? speed.multiplier ** this.speedCount : 1;
+    const groups = this.runLine([{ count: this.baseRate, value: BALANCE.production.baseValue }], 1, bySpeed, false, false);
+    return groups.reduce((s, g) => s + g.count * g.value, 0);
+  }
+
   /** Score per second at the end of the line right now (no state is changed). */
   get scoreRate(): number {
     const groups = this.runLine(
@@ -203,7 +211,11 @@ export class Simulation {
     this.ballsOut += count;
     this.steps += 1;
 
-    if (this.trackHeat) this.noteRate(this.scoreRate);
+    if (this.trackHeat) {
+      const r = this.scoreRate;
+      this.noteRate(BALANCE.heat.excludeBoost ? this.baseScoreRate : r);
+      this.rate = r;
+    }
     const fever = this.fever ? this.fever.advance(this.stepSec, this.score, this.heatStage) : [];
 
     return { gained, triggers, boostStarted: !wasActive && this.boostActive, fever };

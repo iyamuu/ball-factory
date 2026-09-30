@@ -66,6 +66,8 @@ export class FeverLottery {
   longestChain = 0;
   /** Milestones passed while the holds were full. */
   lostHolds = 0;
+  /** EXPERIMENT: continuation checks by heat stage. */
+  continueChecks = [0, 0, 0, 0];
 
   constructor(seed: number) {
     // Separate stream from the offers so the lottery never changes what is offered.
@@ -108,7 +110,10 @@ export class FeverLottery {
       this.feverRemainingSec -= dt;
       if (this.feverRemainingSec <= 1e-9) {
         this.feverRemainingSec = 0;
-        if (this.rng.next() < F.continueChance) {
+        const cc = F.continueByHeat ? F.continueByHeat[Math.min(3, heat)] : F.continueChance;
+        this.continueChecks[Math.min(3, heat)] += 1;
+        const capped = F.maxChain > 0 && this.chain >= F.maxChain;
+        if (!capped && this.rng.next() < cc) {
           this.chain += 1;
           this.feverRemainingSec = F.durationSec;
           this.longestChain = Math.max(this.longestChain, this.chain);
@@ -152,7 +157,8 @@ export class FeverLottery {
   }
 
   private makeHold(heat: number): Hold {
-    const weights = F.colorWeightsByHeat[Math.max(0, Math.min(F.colorWeightsByHeat.length - 1, heat))];
+    const h = F.heatHolds ? heat : 0;
+    const weights = F.colorWeightsByHeat[Math.max(0, Math.min(F.colorWeightsByHeat.length - 1, h))];
     const total = weights.reduce((a, b) => a + b, 0);
     let r = this.rng.next() * total;
     let ci = 0;
